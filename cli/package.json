@@ -1,27 +1,36 @@
 {
   "name": "clawfix",
   "version": "0.1.0",
-  "description": "AI-powered OpenClaw diagnostic and repair — run `npx clawfix` to fix your setup",
-  "type": "module",
+  "description": "AI-powered diagnostic and repair for OpenClaw installations",
   "bin": {
-    "clawfix": "./index.js"
+    "clawfix": "./bin/clawfix.js"
   },
+  "type": "module",
   "keywords": [
     "openclaw",
-    "ai-agent",
+    "ai",
     "diagnostic",
     "repair",
+    "agent",
     "fix",
     "devtools"
   ],
-  "author": "Arca <arca@arcabot.ai> (https://arcabot.ai)",
-  "license": "MIT",
   "homepage": "https://clawfix.dev",
   "repository": {
     "type": "git",
     "url": "https://github.com/arcaboteth/clawfix"
   },
+  "bugs": {
+    "url": "https://github.com/arcaboteth/clawfix/issues"
+  },
+  "author": "Arca <arca@arcabot.ai> (https://arcabot.ai)",
+  "license": "MIT",
   "engines": {
     "node": ">=18.0.0"
-  }
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ]
 }
