@@ -128,9 +128,10 @@ diagnoseRouter.get('/fix/:fixId', (req, res) => {
     return res.status(404).json({ error: 'Fix not found or expired' });
   }
   
-  // Return just the script as plain text
+  // Return just the script as plain text (downloadable)
   if (req.headers.accept === 'text/plain' || req.query.format === 'script') {
-    res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="clawfix-${req.params.fixId}.sh"`);
     return res.send(fix.fixScript);
   }
   

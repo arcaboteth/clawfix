@@ -180,8 +180,8 @@ function resultsPage(fixId) {
         html += '<div class="copy-bar">';
         html += '<h2>🔧 Fix Script</h2>';
         html += '<div style="display:flex;gap:8px">';
-        html += '<button class="btn btn-outline" onclick="copyScript()">Copy Script</button>';
-        html += '<button class="btn" onclick="downloadScript()">Download fix.sh</button>';
+        html += '<button class="btn btn-outline" onclick="copyScript()">📋 Copy Script</button>';
+        html += '<a class="btn" href="' + API_BASE + '/api/fix/' + fixId + '?format=script" download="clawfix-' + fixId + '.sh" style="text-decoration:none;display:inline-block">⬇ Download fix.sh</a>';
         html += '</div></div>';
         html += '<pre id="fixScript">' + escapeHtml(data.fixScript) + '</pre>';
         html += '<p style="color:var(--muted);font-size:0.85rem;margin-top:8px">';
@@ -215,49 +215,49 @@ function resultsPage(fixId) {
 
     function copyScript() {
       if (!window._fixScript) { alert('No fix script available'); return; }
-      try {
+      
+      // Method 1: Modern clipboard API
+      if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(window._fixScript).then(() => {
-          const btn = document.querySelector('[onclick="copyScript()"]');
-          if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy Script', 2000); }
-        }).catch(() => {
-          // Fallback: select text from pre element
-          const pre = document.getElementById('fixScript');
-          if (pre) { 
-            const range = document.createRange(); range.selectNodeContents(pre);
-            const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-            document.execCommand('copy');
-            alert('Copied to clipboard!');
-          }
-        });
-      } catch(e) { alert('Copy failed — select the script text manually'); }
+          showCopySuccess();
+        }).catch(() => fallbackCopy());
+      } else {
+        fallbackCopy();
+      }
     }
 
-    function downloadScript() {
-      if (!window._fixScript) { alert('No fix script available'); return; }
+    function fallbackCopy() {
+      // Method 2: textarea + execCommand (works on mobile)
+      const ta = document.createElement('textarea');
+      ta.value = window._fixScript;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
       try {
-        // Method 1: Blob URL
-        const blob = new Blob([window._fixScript], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'clawfix-' + fixId + '.sh';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 100);
+        document.execCommand('copy');
+        showCopySuccess();
       } catch(e) {
-        // Method 2: Data URI fallback
-        try {
-          const encoded = encodeURIComponent(window._fixScript);
-          const a = document.createElement('a');
-          a.href = 'data:text/plain;charset=utf-8,' + encoded;
-          a.download = 'clawfix-' + fixId + '.sh';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-        } catch(e2) {
-          alert('Download failed — use the Copy button instead');
+        // Method 3: Select the pre element text
+        const pre = document.getElementById('fixScript');
+        if (pre) {
+          const range = document.createRange();
+          range.selectNodeContents(pre);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          alert('Text selected — press Ctrl+C / Cmd+C to copy');
         }
+      }
+      document.body.removeChild(ta);
+    }
+
+    function showCopySuccess() {
+      const btn = document.querySelector('[onclick="copyScript()"]');
+      if (btn) {
+        btn.textContent = '✅ Copied!';
+        setTimeout(() => btn.textContent = '📋 Copy Script', 2000);
       }
     }
 
