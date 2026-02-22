@@ -134,7 +134,9 @@ diagnoseRouter.get('/fix/:fixId', (req, res) => {
     return res.send(fix.fixScript);
   }
   
-  res.json(fix);
+  // Strip internal metadata
+  const { _hostHash, _os, _arch, _nodeVersion, _openclawVersion, _aiIssues, ...clientFix } = fix;
+  res.json(clientFix);
 });
 
 // Stats endpoint

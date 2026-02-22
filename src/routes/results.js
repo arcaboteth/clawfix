@@ -214,18 +214,51 @@ function resultsPage(fixId) {
     }
 
     function copyScript() {
-      navigator.clipboard.writeText(window._fixScript).then(() => {
-        const btns = document.querySelectorAll('.btn-outline');
-        btns.forEach(b => { if (b.textContent === 'Copy Script') { b.textContent = 'Copied!'; setTimeout(() => b.textContent = 'Copy Script', 2000); }});
-      });
+      if (!window._fixScript) { alert('No fix script available'); return; }
+      try {
+        navigator.clipboard.writeText(window._fixScript).then(() => {
+          const btn = document.querySelector('[onclick="copyScript()"]');
+          if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy Script', 2000); }
+        }).catch(() => {
+          // Fallback: select text from pre element
+          const pre = document.getElementById('fixScript');
+          if (pre) { 
+            const range = document.createRange(); range.selectNodeContents(pre);
+            const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+            document.execCommand('copy');
+            alert('Copied to clipboard!');
+          }
+        });
+      } catch(e) { alert('Copy failed — select the script text manually'); }
     }
 
     function downloadScript() {
-      const blob = new Blob([window._fixScript], { type: 'text/x-sh' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = 'clawfix-' + fixId + '.sh';
-      a.click(); URL.revokeObjectURL(url);
+      if (!window._fixScript) { alert('No fix script available'); return; }
+      try {
+        // Method 1: Blob URL
+        const blob = new Blob([window._fixScript], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'clawfix-' + fixId + '.sh';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+      } catch(e) {
+        // Method 2: Data URI fallback
+        try {
+          const encoded = encodeURIComponent(window._fixScript);
+          const a = document.createElement('a');
+          a.href = 'data:text/plain;charset=utf-8,' + encoded;
+          a.download = 'clawfix-' + fixId + '.sh';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        } catch(e2) {
+          alert('Download failed — use the Copy button instead');
+        }
+      }
     }
 
     loadResults();
