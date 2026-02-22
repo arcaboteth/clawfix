@@ -46,12 +46,21 @@ export async function initDB() {
         ai_tokens INTEGER,
         fix_script TEXT,
         ai_summary TEXT,
+        ai_insights TEXT,
+        known_issues_detail JSONB DEFAULT '[]',
         outcome TEXT DEFAULT 'unknown',
         paid BOOLEAN DEFAULT FALSE,
         amount NUMERIC(10,2) DEFAULT 0,
         payment_method TEXT,
         source TEXT DEFAULT 'unknown'
       );
+
+      -- Add columns if they don't exist (for existing deployments)
+      DO $$ BEGIN
+        ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS ai_insights TEXT;
+        ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS known_issues_detail JSONB DEFAULT '[]';
+      EXCEPTION WHEN duplicate_column THEN NULL;
+      END $$;
 
       CREATE TABLE IF NOT EXISTS patterns (
         id TEXT PRIMARY KEY,
@@ -109,8 +118,8 @@ export async function storeDiagnosis(result, source = 'cli') {
   try {
     await db.query(`
       INSERT INTO diagnoses (id, host_hash, os, arch, node_version, openclaw_version,
-        issues_pattern, issues_ai, issues_count, ai_model, fix_script, ai_summary, source)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        issues_pattern, issues_ai, issues_count, ai_model, fix_script, ai_summary, ai_insights, known_issues_detail, source)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
     `, [
       result.fixId,
       result._hostHash || null,
@@ -124,6 +133,8 @@ export async function storeDiagnosis(result, source = 'cli') {
       result.model || null,
       result.fixScript || null,
       result.analysis || null,
+      result.aiInsights || null,
+      JSON.stringify(result.knownIssues || []),
       source,
     ]);
 
@@ -179,6 +190,51 @@ export async function storeFeedback(fixId, success, issuesRemaining, comment) {
     }
   } catch (err) {
     console.error('Store feedback failed:', err.message);
+  }
+}
+
+/**
+ * Retrieve a diagnosis by fix ID (for results page persistence)
+ */
+export async function getDiagnosis(fixId) {
+  const db = getPool();
+  if (!db) return null;
+
+  try {
+    const result = await db.query(
+      'SELECT * FROM diagnoses WHERE id = $1',
+      [fixId]
+    );
+    if (!result.rows[0]) return null;
+
+    const row = result.rows[0];
+
+    // Use full issue details if available, otherwise reconstruct from patterns table
+    let knownIssues = row.known_issues_detail || [];
+    if ((!knownIssues || knownIssues.length === 0) && row.issues_pattern?.length > 0) {
+      const patterns = await db.query(
+        'SELECT id, title, severity FROM patterns WHERE id = ANY($1)',
+        [row.issues_pattern]
+      );
+      knownIssues = row.issues_pattern.map(pid => {
+        const p = patterns.rows.find(r => r.id === pid);
+        return p ? { id: p.id, title: p.title, severity: p.severity, description: '' } : null;
+      }).filter(Boolean);
+    }
+
+    return {
+      fixId: row.id,
+      timestamp: row.created_at.toISOString(),
+      issuesFound: row.issues_count,
+      knownIssues,
+      analysis: row.ai_summary || `Pattern matching found ${row.issues_count} issue(s).`,
+      fixScript: row.fix_script || null,
+      aiInsights: row.ai_insights || '',
+      model: row.ai_model || 'pattern-matching',
+    };
+  } catch (err) {
+    console.error('Get diagnosis failed:', err.message);
+    return null;
   }
 }
 

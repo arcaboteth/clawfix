@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { nanoid } from 'nanoid';
 import { detectIssues, KNOWN_ISSUES } from '../known-issues.js';
-import { storeDiagnosis, storeFeedback, getStats } from '../db.js';
+import { storeDiagnosis, storeFeedback, getStats, getDiagnosis } from '../db.js';
 
 export const diagnoseRouter = Router();
 
@@ -121,9 +121,19 @@ diagnoseRouter.post('/diagnose', async (req, res) => {
   }
 });
 
-// Retrieve a previously generated fix
-diagnoseRouter.get('/fix/:fixId', (req, res) => {
-  const fix = fixes.get(req.params.fixId);
+// Retrieve a previously generated fix (memory cache → DB fallback)
+diagnoseRouter.get('/fix/:fixId', async (req, res) => {
+  let fix = fixes.get(req.params.fixId);
+  
+  // Fall back to database if not in memory
+  if (!fix) {
+    fix = await getDiagnosis(req.params.fixId);
+    if (fix) {
+      // Re-cache in memory for subsequent requests
+      fixes.set(req.params.fixId, fix);
+    }
+  }
+
   if (!fix) {
     return res.status(404).json({ error: 'Fix not found or expired' });
   }
