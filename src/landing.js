@@ -30,7 +30,7 @@ const LANDING_HTML = `<!DOCTYPE html>
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="ClawFix — Fix Your OpenClaw in One Command">
-  <meta name="twitter:description" content="AI-powered diagnostic and repair for OpenClaw. $2 per fix.">
+  <meta name="twitter:description" content="AI-powered diagnostic and repair for OpenClaw. Free during beta.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦞</text></svg>">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -162,6 +162,50 @@ const LANDING_HTML = `<!DOCTYPE html>
       background: var(--accent);
       color: white;
     }
+
+    /* Beta banner */
+    .beta-banner {
+      background: linear-gradient(135deg, rgba(34,197,94,0.15), rgba(59,130,246,0.15));
+      border: 1px solid var(--green);
+      border-radius: 12px;
+      padding: 16px 24px;
+      max-width: 560px;
+      margin: 0 auto 32px;
+      text-align: center;
+    }
+    .beta-banner .beta-tag {
+      display: inline-block;
+      background: var(--green);
+      color: #0a0a0a;
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+    .beta-banner p {
+      color: var(--green);
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+    .beta-banner .beta-sub {
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 400;
+      margin-top: 4px;
+    }
+    .strikethrough {
+      text-decoration: line-through;
+      color: var(--muted);
+      font-size: 1rem;
+    }
+    .free-tag {
+      color: var(--green);
+      font-weight: 800;
+    }
+
     .command-hint {
       color: var(--muted);
       font-size: 0.85rem;
@@ -329,10 +373,22 @@ const LANDING_HTML = `<!DOCTYPE html>
           Runs locally, sends redacted logs, gets a fix script back.
         </p>
 
-        <div class="command-box" onclick="copyCommand()">
+        <div class="beta-banner">
+          <span class="beta-tag">🎉 Early Access</span>
+          <p>Free during beta — all features, no payment required</p>
+          <p class="beta-sub">Be an early user, help us improve, pay nothing</p>
+        </div>
+
+        <div class="command-box" onclick="copyCommand('npx')">
           <span class="prompt">$</span>
-          <code id="cmd">curl -sSL clawfix.dev/fix | bash</code>
-          <button class="copy-btn" id="copyBtn">Copy</button>
+          <code id="cmd-npx">npx clawfix</code>
+          <button class="copy-btn" id="copyBtn-npx">Copy</button>
+        </div>
+        <p class="command-hint" style="margin-bottom: 12px;">or use the curl version:</p>
+        <div class="command-box" onclick="copyCommand('curl')" style="margin-bottom: 8px;">
+          <span class="prompt">$</span>
+          <code id="cmd-curl">curl -sSL clawfix.dev/fix | bash</code>
+          <button class="copy-btn" id="copyBtn-curl">Copy</button>
         </div>
         <p class="command-hint">Works on macOS, Linux, and WSL. Requires Node.js.</p>
       </div>
@@ -416,15 +472,17 @@ const LANDING_HTML = `<!DOCTYPE html>
         <h2 class="section-title">Pricing</h2>
         <div class="pricing-cards">
           <div class="price-card">
-            <div class="price">Free</div>
+            <div class="price free-tag">Free</div>
             <h3>Quick Scan</h3>
             <p>Pattern matching against 12+ known issues. Instant results, no AI needed.</p>
+            <p style="margin-top:8px;color:var(--green);font-size:0.8rem;font-weight:600;">Always free</p>
           </div>
           <div class="price-card featured">
-            <span class="badge">Most Popular</span>
-            <div class="price">$2</div>
+            <span class="badge" style="background:var(--green);">Free During Beta</span>
+            <div class="price free-tag">Free <span class="strikethrough">$2</span></div>
             <h3>AI Fix</h3>
             <p>Full AI analysis + generated fix script for novel issues. Pay after you see the fix.</p>
+            <p style="margin-top:8px;color:var(--green);font-size:0.8rem;font-weight:600;">🎉 $0 during beta</p>
           </div>
           <div class="price-card">
             <div class="price">$9<span class="price-label">/mo</span></div>
@@ -484,10 +542,10 @@ const LANDING_HTML = `<!DOCTYPE html>
   </footer>
 
   <script>
-    function copyCommand() {
-      const cmd = document.getElementById('cmd').textContent;
+    function copyCommand(type) {
+      const cmd = document.getElementById('cmd-' + type).textContent;
       navigator.clipboard.writeText(cmd).then(() => {
-        const btn = document.getElementById('copyBtn');
+        const btn = document.getElementById('copyBtn-' + type);
         btn.textContent = 'Copied!';
         setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
       });
