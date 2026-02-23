@@ -1,0 +1,10 @@
+# ClawFix Diagnostic Script Hash
+# This hash is for the bash script served by `curl -sSL clawfix.dev/fix`
+# 
+# Verify: curl -sSL clawfix.dev/fix | shasum -a 256
+# Compare with: curl -s clawfix.dev/fix/sha256
+#
+# Note: This hash changes when the script is updated. Both this file and
+# the /fix/sha256 endpoint will always match the currently served script.
+
+SHA256: cf466fe540b5f2b5a6f30798eec80362008987b50b34be8cc8d3f31183c9cdab

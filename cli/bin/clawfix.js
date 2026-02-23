@@ -15,7 +15,14 @@ import { createHash } from 'node:crypto';
 
 // --- Config ---
 const API_URL = process.env.CLAWFIX_API || 'https://clawfix.dev';
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
+
+// --- Flags ---
+const args = process.argv.slice(2);
+const DRY_RUN = args.includes('--dry-run') || args.includes('-n');
+const SHOW_DATA = args.includes('--show-data') || args.includes('-d');
+const AUTO_SEND = process.env.CLAWFIX_AUTO === '1' || args.includes('--yes') || args.includes('-y');
+const SHOW_HELP = args.includes('--help') || args.includes('-h');
 
 // --- Colors ---
 const c = {
@@ -77,8 +84,41 @@ function sanitizeConfig(config) {
 
 // --- Main ---
 async function main() {
+  if (SHOW_HELP) {
+    console.log(`
+🦞 ClawFix v${VERSION} — AI-Powered OpenClaw Diagnostic
+
+Usage: npx clawfix [options]
+
+Options:
+  --dry-run, -n    Scan locally only — shows what would be collected, sends nothing
+  --show-data, -d  Display the full diagnostic payload before asking to send
+  --yes, -y        Skip confirmation prompt and send automatically
+  --help, -h       Show this help message
+
+Environment:
+  CLAWFIX_API      Override API URL (default: https://clawfix.dev)
+  CLAWFIX_AUTO=1   Same as --yes
+
+Security:
+  • All API keys, tokens, and passwords are automatically redacted
+  • Your hostname is SHA-256 hashed (only first 8 chars sent)
+  • No file contents are read (only existence checks)
+  • Nothing is sent without your explicit approval (unless --yes)
+  • Source code: https://github.com/arcaboteth/clawfix
+
+Examples:
+  npx clawfix                  # Interactive scan + optional AI analysis
+  npx clawfix --dry-run        # See what data would be collected (sends nothing)
+  npx clawfix --show-data      # Show full payload before asking to send
+  npx clawfix --yes            # Auto-send for CI/scripting
+`);
+    return;
+  }
+
   console.log('');
   console.log(c.cyan(`🦞 ClawFix v${VERSION} — AI-Powered OpenClaw Diagnostic`));
+  if (DRY_RUN) console.log(c.yellow('   🔍 DRY RUN MODE — nothing will be sent'));
   console.log(c.cyan('━'.repeat(50)));
   console.log('');
 
@@ -335,10 +375,32 @@ async function main() {
     },
   };
 
+  // --- Show collected data ---
+  if (DRY_RUN || SHOW_DATA) {
+    console.log('');
+    console.log(c.bold('📦 Data that would be sent:'));
+    console.log(c.cyan('━'.repeat(50)));
+    console.log(JSON.stringify(diagnostic, null, 2));
+    console.log(c.cyan('━'.repeat(50)));
+    console.log('');
+  }
+
+  if (DRY_RUN) {
+    console.log(c.yellow('🔍 Dry run complete — nothing was sent.'));
+    console.log('');
+    console.log('To send this data for AI analysis:');
+    console.log(c.cyan('  npx clawfix'));
+    console.log('');
+    console.log(c.cyan('🦞 ClawFix — made by Arca (arcabot.eth)'));
+    console.log(c.cyan('   https://clawfix.dev | https://x.com/arcaboteth'));
+    console.log('');
+    return;
+  }
+
   // --- Send for AI analysis ---
   if (issues.length === 0) {
     console.log(c.green('Your OpenClaw is looking good! No fixes needed.'));
-    console.log(`If you're still having issues, set CLAWFIX_VERBOSE=1 and run again.`);
+    console.log(`If you're still having issues, run with --show-data to see what would be collected.`);
     console.log('');
     console.log(c.cyan(`🦞 ClawFix — made by Arca (arcabot.eth)`));
     console.log(c.cyan(`   https://clawfix.dev | https://x.com/arcaboteth`));
@@ -347,13 +409,13 @@ async function main() {
   }
 
   console.log(c.bold('Want AI-powered fixes? Send this diagnostic for analysis.'));
-  console.log('All secrets are redacted. No private data is sent.');
+  console.log('');
+  console.log(c.dim('Data sent:     OS, versions, OpenClaw config (secrets redacted), error logs'));
+  console.log(c.dim('NOT sent:      API keys, file contents, chat history, real hostname'));
+  console.log(c.dim('Inspect first: npx clawfix --dry-run'));
   console.log('');
 
-  // Check if running in non-interactive mode
-  const autoSend = process.env.CLAWFIX_AUTO === '1' || process.argv.includes('--yes') || process.argv.includes('-y');
-
-  let shouldSend = autoSend;
+  let shouldSend = AUTO_SEND;
   if (!shouldSend) {
     const readline = await import('node:readline');
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -366,8 +428,8 @@ async function main() {
 
   if (!shouldSend) {
     console.log('');
-    console.log('No problem! You can send it manually:');
-    console.log(c.cyan(`  npx clawfix --yes`));
+    console.log('No problem! Review data first with:');
+    console.log(c.cyan('  npx clawfix --dry-run'));
     console.log('');
     return;
   }

@@ -1,28 +1,58 @@
 import { Router } from 'express';
+import { createHash } from 'node:crypto';
 
 export const scriptRouter = Router();
 
 // Serve the diagnostic script: curl -sSL clawfix.dev/fix | bash
 scriptRouter.get('/fix', (req, res) => {
   res.setHeader('Content-Type', 'text/plain');
+  res.setHeader('X-Script-SHA256', SCRIPT_HASH);
   res.send(DIAGNOSTIC_SCRIPT);
+});
+
+// Script hash endpoint for verification
+scriptRouter.get('/fix/sha256', (req, res) => {
+  res.json({
+    sha256: SCRIPT_HASH,
+    verify: 'curl -sSL clawfix.dev/fix | shasum -a 256',
+    note: 'Compare this hash with the one in the GitHub repo: https://github.com/arcaboteth/clawfix/blob/main/SCRIPT_HASH',
+  });
 });
 
 const DIAGNOSTIC_SCRIPT = `#!/usr/bin/env bash
 # ClawFix — AI-Powered OpenClaw Diagnostic
 # https://clawfix.dev
 # 
-# This script collects diagnostic data from your OpenClaw installation.
-# It does NOT modify anything. It does NOT send data without your approval.
-# Source code: https://github.com/arcaboteth/clawfix
+# WHAT THIS SCRIPT DOES:
+#   1. Checks your OpenClaw installation (config, logs, plugins, ports)
+#   2. Detects common issues via pattern matching
+#   3. Optionally sends redacted diagnostic data for AI analysis (asks first)
 #
-# Usage: curl -sSL clawfix.dev/fix | bash
+# WHAT THIS SCRIPT DOES NOT DO:
+#   ✗ Modify any files
+#   ✗ Send data without your explicit approval
+#   ✗ Collect API keys, tokens, or passwords (all redacted)
+#   ✗ Read file contents (only checks if files exist)
+#   ✗ Send your real hostname (SHA-256 hashed)
+#
+# VERIFY THIS SCRIPT:
+#   curl -sSL clawfix.dev/fix > clawfix.sh    # Download first
+#   cat clawfix.sh                              # Read it
+#   shasum -a 256 clawfix.sh                    # Check hash
+#   curl -s clawfix.dev/fix/sha256              # Compare with published hash
+#   bash clawfix.sh                             # Run after reviewing
+#
+# PREFER NPX (auditable source on npm/GitHub):
+#   npx clawfix                 # Interactive scan
+#   npx clawfix --dry-run       # See what data would be collected
+#
+# Source code: https://github.com/arcaboteth/clawfix
 
 set -euo pipefail
 
 # --- Config ---
-API_URL="\${CLAWSOS_API:-https://clawfix.dev}"
-VERSION="0.1.0"
+API_URL="\${CLAWFIX_API:-https://clawfix.dev}"
+VERSION="0.2.0"
 
 # --- Colors ---
 RED='\\033[0;31m'
@@ -357,21 +387,23 @@ echo ""
 # --- Ask to send for AI analysis ---
 if [ \$ISSUES -gt 0 ]; then
   echo -e "\${BOLD}Want AI-powered fixes? Send this diagnostic for analysis.\${NC}"
-  echo -e "All secrets are redacted. Review the data below if you want."
   echo ""
   echo -e "\${YELLOW}Data that will be sent:\${NC}"
   echo "  • OS type, version, architecture"
   echo "  • Node/npm versions"
   echo "  • OpenClaw version and config (secrets redacted)"
-  echo "  • Recent error logs"
-  echo "  • Plugin status"
+  echo "  • Recent error logs (last 30 lines matching error/warn)"
+  echo "  • Plugin status (enabled/disabled only)"
   echo "  • Gateway status"
   echo ""
   echo -e "\${YELLOW}NOT sent:\${NC}"
   echo "  • API keys, tokens, passwords (all redacted)"
   echo "  • File contents (SOUL.md, AGENTS.md, etc.)"
   echo "  • Chat history or messages"
-  echo "  • IP address or hostname (hashed)"
+  echo "  • IP address or real hostname (hashed to 8 chars)"
+  echo ""
+  echo -e "\${YELLOW}To inspect the full payload first:\${NC}"
+  echo "  npx clawfix --dry-run"
   echo ""
   read -p "Send diagnostic for AI analysis? [y/N] " -n 1 -r
   echo ""
@@ -435,3 +467,6 @@ echo -e "\${CYAN}🦞 ClawFix — made by Arca (arcabot.eth)\${NC}"
 echo -e "\${CYAN}   https://clawfix.dev | https://x.com/arcaboteth\${NC}"
 echo ""
 `;
+
+// Compute hash of the script for verification
+const SCRIPT_HASH = createHash('sha256').update(DIAGNOSTIC_SCRIPT).digest('hex');

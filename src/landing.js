@@ -8,7 +8,7 @@ landingRouter.get('/', (req, res) => {
     return res.json({
       name: 'ClawFix',
       tagline: 'AI-powered OpenClaw repair',
-      version: '0.1.0',
+      version: '0.2.0',
       fix: 'curl -sSL clawfix.dev/fix | bash',
     });
   }
@@ -357,6 +357,7 @@ const LANDING_HTML = `<!DOCTYPE html>
       <a href="/" class="logo">🦞 Claw<span>Fix</span></a>
       <nav class="nav-links">
         <a href="#how">How It Works</a>
+        <a href="#security">Security</a>
         <a href="#pricing">Pricing</a>
         <a href="https://github.com/arcaboteth/clawfix">GitHub</a>
       </nav>
@@ -384,13 +385,11 @@ const LANDING_HTML = `<!DOCTYPE html>
           <code id="cmd-npx">npx clawfix</code>
           <button class="copy-btn" id="copyBtn-npx">Copy</button>
         </div>
-        <p class="command-hint" style="margin-bottom: 12px;">or use the curl version:</p>
-        <div class="command-box" onclick="copyCommand('curl')" style="margin-bottom: 8px;">
-          <span class="prompt">$</span>
-          <code id="cmd-curl">curl -sSL clawfix.dev/fix | bash</code>
-          <button class="copy-btn" id="copyBtn-curl">Copy</button>
-        </div>
-        <p class="command-hint">Works on macOS, Linux, and WSL. Requires Node.js.</p>
+        <p class="command-hint" style="margin-bottom: 8px;">
+          <strong style="color:var(--green)">Recommended</strong> — auditable source on <a href="https://www.npmjs.com/package/clawfix" style="color:var(--muted)">npm</a> and <a href="https://github.com/arcaboteth/clawfix" style="color:var(--muted)">GitHub</a>
+        </p>
+        <p class="command-hint" style="margin-bottom: 4px;">Want to inspect before running? <code style="color:var(--green)">npx clawfix --dry-run</code></p>
+        <p class="command-hint" style="margin-bottom: 48px;">Works on macOS, Linux, and WSL. Requires Node.js 18+.</p>
       </div>
     </section>
 
@@ -493,36 +492,82 @@ const LANDING_HTML = `<!DOCTYPE html>
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="security">
       <div class="container">
-        <h2 class="section-title">Why Trust a Script From the Internet?</h2>
+        <h2 class="section-title">Security & Transparency</h2>
+        <p style="color:var(--muted);text-align:center;max-width:600px;margin:0 auto 32px;font-size:0.95rem;">
+          You're right to be skeptical of tools from the internet. Here's exactly what ClawFix does and doesn't do — verify it yourself.
+        </p>
         <div class="trust-grid">
+          <div class="trust-item">
+            <span class="trust-icon">🔍</span>
+            <div>
+              <h4>Inspect Before Running</h4>
+              <p><code>npx clawfix --dry-run</code> shows exactly what data would be collected — sends nothing. Read the output. Decide for yourself.</p>
+            </div>
+          </div>
           <div class="trust-item">
             <span class="trust-icon">🔓</span>
             <div>
-              <h4>Open Source</h4>
-              <p>The diagnostic script is on GitHub. Read every line before running it.</p>
+              <h4>100% Open Source</h4>
+              <p><a href="https://github.com/arcaboteth/clawfix" style="color:var(--blue)">Every line on GitHub</a>. CLI source, server code, diagnostic script — all public. Audit it.</p>
             </div>
           </div>
           <div class="trust-item">
             <span class="trust-icon">🔒</span>
             <div>
-              <h4>Secrets Redacted</h4>
-              <p>API keys, tokens, passwords — all stripped before anything leaves your machine.</p>
+              <h4>Secrets Auto-Redacted</h4>
+              <p>API keys, tokens, passwords — all replaced with <code>***REDACTED***</code> before anything leaves your machine. The <code>env</code> block is skipped entirely.</p>
+            </div>
+          </div>
+          <div class="trust-item">
+            <span class="trust-icon">🚫</span>
+            <div>
+              <h4>No File Contents Read</h4>
+              <p>ClawFix checks if SOUL.md exists — it never reads what's inside. No chat history, no memory files, no personal data.</p>
             </div>
           </div>
           <div class="trust-item">
             <span class="trust-icon">👀</span>
             <div>
-              <h4>Review Before Apply</h4>
-              <p>Fix scripts are shown to you first. Nothing runs without your explicit approval.</p>
+              <h4>Consent Required</h4>
+              <p>The diagnostic asks <code>[y/N]</code> before sending anything. No data leaves your machine without you typing "y".</p>
             </div>
           </div>
           <div class="trust-item">
             <span class="trust-icon">💾</span>
             <div>
-              <h4>Auto Backup</h4>
-              <p>Every fix backs up your config first. One command to rollback if needed.</p>
+              <h4>Fix Scripts = Your Review</h4>
+              <p>Fix scripts are saved to <code>/tmp</code> for you to read first. Every fix backs up your config. Nothing auto-executes.</p>
+            </div>
+          </div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;margin-top:32px;">
+          <h3 style="font-size:1rem;margin-bottom:12px;">📦 What Exactly Is Sent</h3>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+            <div>
+              <p style="color:var(--green);font-weight:600;font-size:0.85rem;margin-bottom:8px;">✅ SENT (redacted)</p>
+              <ul style="color:var(--muted);font-size:0.85rem;list-style:none;padding:0;">
+                <li>• OS type, version, architecture</li>
+                <li>• Node.js and npm versions</li>
+                <li>• OpenClaw version</li>
+                <li>• Config structure (all secrets redacted)</li>
+                <li>• Recent error log lines</li>
+                <li>• Plugin names + enabled status</li>
+                <li>• Gateway status</li>
+                <li>• Hostname hash (8 chars of SHA-256)</li>
+              </ul>
+            </div>
+            <div>
+              <p style="color:var(--accent);font-weight:600;font-size:0.85rem;margin-bottom:8px;">❌ NEVER SENT</p>
+              <ul style="color:var(--muted);font-size:0.85rem;list-style:none;padding:0;">
+                <li>• API keys, tokens, passwords</li>
+                <li>• File contents (SOUL.md, memory, etc.)</li>
+                <li>• Chat history or messages</li>
+                <li>• IP address or real hostname</li>
+                <li>• Environment variables</li>
+                <li>• Personal data of any kind</li>
+              </ul>
             </div>
           </div>
         </div>
