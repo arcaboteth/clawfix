@@ -373,6 +373,166 @@ jq '.agents.defaults.heartbeat.model = "anthropic/claude-sonnet-4-6"' ~/.opencla
   mv /tmp/oc-fix.json ~/.openclaw/openclaw.json
 echo "✅ Token usage optimized (30min heartbeat + Sonnet model)"`,
   },
+
+  // ─── New issues from production crash analysis (Feb 2026) ───
+
+  {
+    id: 'auto-update-restart-loop',
+    severity: 'critical',
+    title: 'Auto-update causing gateway restart loop',
+    description: 'When update.auto.enabled is true, the gateway detects a new version on boot, triggers a config reload, SIGTERMs itself, then repeats on restart — creating a crash loop. The OS service manager (launchd/systemd) backs off after rapid failures, leaving the gateway dead for hours.',
+    detect: (diag) => {
+      const autoUpdate = diag.config?.update?.auto?.enabled === true;
+      const logs = (diag.logs?.errors || '') + (diag.logs?.gatewayLog || '');
+      // Look for rapid SIGTERM cycles
+      const sigtermCount = (logs.match(/signal SIGTERM received/gi) || []).length;
+      const restartCount = (logs.match(/listening.*PID/gi) || []).length;
+      // Auto-update enabled is always worth flagging; crash loop makes it critical
+      return autoUpdate && (sigtermCount >= 2 || restartCount >= 3);
+    },
+    fix: `# Fix: Disable auto-update (causes restart loops with current OpenClaw versions)
+cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.\$(date +%s)
+jq '.update.auto.enabled = false' ~/.openclaw/openclaw.json > /tmp/oc-fix.json && \\
+  mv /tmp/oc-fix.json ~/.openclaw/openclaw.json
+echo "✅ Auto-update disabled — use 'openclaw update' manually when ready"
+echo "ℹ️  Restart gateway: openclaw gateway restart"`,
+  },
+
+  {
+    id: 'auto-update-enabled-warning',
+    severity: 'medium',
+    title: 'Auto-update is enabled (risk of restart loops)',
+    description: 'Auto-update is enabled in your config. This can cause the gateway to restart unexpectedly when a new version is detected, especially combined with plugin config reloads. Recommend manual updates instead.',
+    detect: (diag) => {
+      return diag.config?.update?.auto?.enabled === true;
+    },
+    fix: `# Fix: Disable auto-update for stability
+cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak.\$(date +%s)
+jq '.update.auto.enabled = false' ~/.openclaw/openclaw.json > /tmp/oc-fix.json && \\
+  mv /tmp/oc-fix.json ~/.openclaw/openclaw.json
+echo "✅ Auto-update disabled — run 'openclaw update' manually"`,
+  },
+
+  {
+    id: 'config-reload-sigterm-cascade',
+    severity: 'high',
+    title: 'Config reload triggering gateway restarts',
+    description: 'Plugin re-registration (especially Mem0) modifies config fields like plugins.installs.*.resolvedAt, triggering config reload evaluations. If the reload causes a gateway restart (SIGTERM), this cascades — especially when combined with auto-update.',
+    detect: (diag) => {
+      const logs = (diag.logs?.errors || '') + (diag.logs?.gatewayLog || '');
+      const reloadAndSigterm = /config change detected.*evaluating reload[\s\S]{0,500}signal SIGTERM received/i.test(logs);
+      const multipleReloads = (logs.match(/config change detected.*evaluating reload/gi) || []).length >= 3;
+      return reloadAndSigterm || multipleReloads;
+    },
+    fix: `# Info: Config reload cascade detected
+# This happens when plugins modify config fields during registration,
+# triggering reload → restart → re-register → reload cycles.
+#
+# Step 1: Disable auto-update if enabled (primary trigger)
+jq '.update.auto.enabled = false' ~/.openclaw/openclaw.json > /tmp/oc-fix.json && \\
+  mv /tmp/oc-fix.json ~/.openclaw/openclaw.json
+#
+# Step 2: Restart gateway cleanly
+openclaw gateway restart
+echo "✅ Config reload cascade mitigated"
+echo "ℹ️  If this recurs, check which plugin is modifying config on startup"`,
+  },
+
+  {
+    id: 'gateway-extended-downtime',
+    severity: 'critical',
+    title: 'Gateway was down for extended period',
+    description: 'After a crash loop, the OS service manager (launchd on macOS, systemd on Linux) applies exponential backoff on restarts. This can leave the gateway dead for hours without the user knowing. No heartbeats, cron jobs, or monitoring runs during downtime.',
+    detect: (diag) => {
+      const service = diag.service || {};
+      // On macOS: runs > 2 means multiple restarts happened
+      if (service.runs > 2 && service.uptimeSeconds < 300) return true;
+      // On Linux: NRestarts > 0 with short uptime
+      if (service.nRestarts > 0 && service.uptimeSeconds < 300) return true;
+      // Also check if gateway PID started very recently but logs show old errors
+      return false;
+    },
+    fix: `# Fix: Gateway was down — restart and verify
+openclaw gateway restart
+sleep 3
+openclaw gateway status
+echo ""
+echo "⚠️  Check what caused the crash loop:"
+echo "   tail -50 ~/.openclaw/logs/gateway.err.log"
+echo ""
+echo "Common causes:"
+echo "  - Auto-update restart loop (disable: jq '.update.auto.enabled = false' ~/.openclaw/openclaw.json)"
+echo "  - Port conflict (check: lsof -i :18789)"
+echo "  - Plugin crash on startup (check error logs)"`,
+  },
+
+  {
+    id: 'browser-relay-handshake-spam',
+    severity: 'medium',
+    title: 'Browser Relay extension spamming invalid handshakes',
+    description: 'The OpenClaw Browser Relay Chrome extension is repeatedly trying to connect with invalid WebSocket handshakes (~every 2 seconds). This bloats gateway.err.log to 200MB+ and makes it hard to find real errors.',
+    detect: (diag) => {
+      const logs = diag.logs?.stderr || diag.logs?.errors || '';
+      const handshakeErrors = (logs.match(/invalid handshake.*chrome-extension|closed before connect.*chrome-extension/gi) || []).length;
+      return handshakeErrors >= 5;
+    },
+    fix: `# Fix: Stop Browser Relay handshake spam
+echo "The OpenClaw Browser Relay Chrome extension is failing to authenticate."
+echo ""
+echo "Options:"
+echo "  1. Configure the extension with your gateway token"
+echo "     - Click the extension icon → Settings → paste your token"
+echo "     - Find token: jq -r '.gateway.auth.token' ~/.openclaw/openclaw.json"
+echo ""
+echo "  2. Remove/disable the extension if you don't need it"
+echo "     - Chrome → Extensions → find 'OpenClaw Browser Relay' → Remove"
+echo ""
+echo "Truncate the bloated error log:"
+tail -1000 ~/.openclaw/logs/gateway.err.log > /tmp/gw-err-trimmed.log && \\
+  mv /tmp/gw-err-trimmed.log ~/.openclaw/logs/gateway.err.log
+echo "✅ Error log truncated (kept last 1000 lines)"`,
+  },
+
+  {
+    id: 'matrix-sync-timeout-spam',
+    severity: 'low',
+    title: 'Matrix sync timeouts spamming error log',
+    description: 'Matrix provider sync calls are failing with ESOCKETTIMEDOUT repeatedly. Usually caused by network issues or Matrix homeserver downtime. Not critical but clutters logs.',
+    detect: (diag) => {
+      const logs = diag.logs?.stderr || diag.logs?.errors || '';
+      const timeouts = (logs.match(/ESOCKETTIMEDOUT/gi) || []).length;
+      return timeouts >= 3;
+    },
+    fix: `# Info: Matrix sync timeouts detected
+echo "Matrix homeserver sync is timing out repeatedly."
+echo ""
+echo "This is usually transient. Check:"
+echo "  - Network connectivity: curl -s https://matrix.org/_matrix/client/versions"
+echo "  - Matrix status: https://status.matrix.org"
+echo ""
+echo "If you don't use Matrix, disable it:"
+echo "  jq '.channels.matrix.enabled = false' ~/.openclaw/openclaw.json > /tmp/oc-fix.json && mv /tmp/oc-fix.json ~/.openclaw/openclaw.json"`,
+  },
+
+  {
+    id: 'oversized-error-log',
+    severity: 'medium',
+    title: 'Error log is very large',
+    description: 'gateway.err.log has grown very large (50MB+), likely due to repeated errors like browser relay spam or Matrix timeouts. This wastes disk space and makes log analysis slow.',
+    detect: (diag) => {
+      return (diag.logs?.errLogSizeMB || 0) > 50;
+    },
+    fix: `# Fix: Truncate oversized error log
+echo "Truncating gateway.err.log (keeping last 5000 lines)..."
+tail -5000 ~/.openclaw/logs/gateway.err.log > /tmp/gw-trimmed.log && \\
+  mv /tmp/gw-trimmed.log ~/.openclaw/logs/gateway.err.log
+echo "✅ Error log truncated"
+echo ""
+echo "To prevent this, identify the source of log spam:"
+echo "  tail -100 ~/.openclaw/logs/gateway.err.log | sort | uniq -c | sort -rn | head -5"
+echo ""
+echo "Common causes: Browser Relay handshake spam, Matrix sync timeouts"`,
+  },
 ];
 
 /**

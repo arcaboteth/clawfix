@@ -161,7 +161,7 @@ diagnoseRouter.get('/stats', async (req, res) => {
     versionBreakdown: dbStats?.versionBreakdown || [],
     outcomes: dbStats?.outcomes || [],
     uptime: process.uptime(),
-    version: '0.2.0',
+    version: '0.3.0',
     aiProvider: AI_CONFIG.provider,
     aiModel: AI_CONFIG.model,
     aiAvailable: !!AI_CONFIG.apiKey,

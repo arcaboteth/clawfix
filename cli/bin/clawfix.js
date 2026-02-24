@@ -15,7 +15,7 @@ import { createHash } from 'node:crypto';
 
 // --- Config ---
 const API_URL = process.env.CLAWFIX_API || 'https://clawfix.dev';
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 
 // --- Flags ---
 const args = process.argv.slice(2);
@@ -197,33 +197,109 @@ Examples:
   if (gatewayPid) console.log(`   PID: ${gatewayPid}`);
   console.log(`   Port: ${gatewayPort}`);
 
-  // --- Logs ---
+  // --- Logs (use tail to avoid reading huge files — err log can be 200MB+) ---
   console.log('');
   console.log(c.blue('📜 Reading recent logs...'));
 
   let errorLogs = '';
   let stderrLogs = '';
+  let gatewayLogTail = '';
+  let errLogSizeMB = 0;
+  let logSizeMB = 0;
 
   const logPath = openclawDir ? join(openclawDir, 'logs', 'gateway.log') : null;
   const errLogPath = openclawDir ? join(openclawDir, 'logs', 'gateway.err.log') : null;
 
   if (logPath && await exists(logPath)) {
     try {
-      const logContent = await readFile(logPath, 'utf8');
-      const lines = logContent.split('\n');
+      const logStat = await stat(logPath);
+      logSizeMB = Math.round(logStat.size / 1024 / 1024);
+      // Use tail to read last 500 lines instead of loading entire file
+      const tailContent = run(`tail -500 "${logPath}" 2>/dev/null`);
+      const lines = tailContent.split('\n');
       errorLogs = lines
         .filter(l => /error|warn|fail|crash|EADDRINUSE|EACCES/i.test(l))
         .slice(-30)
         .join('\n');
-      console.log(c.green(`   ✅ Gateway log found (${lines.length} lines)`));
+      // Also grab gateway restart patterns (SIGTERM + PID lines)
+      gatewayLogTail = lines
+        .filter(l => /signal SIGTERM|listening.*PID|config change detected.*reload|update available/i.test(l))
+        .slice(-20)
+        .join('\n');
+      console.log(c.green(`   ✅ Gateway log found (${logSizeMB}MB, read last 500 lines)`));
     } catch {}
   }
 
   if (errLogPath && await exists(errLogPath)) {
     try {
-      stderrLogs = (await readFile(errLogPath, 'utf8')).split('\n').slice(-50).join('\n');
-      console.log(c.green('   ✅ Error log found'));
+      const errStat = await stat(errLogPath);
+      errLogSizeMB = Math.round(errStat.size / 1024 / 1024);
+      // Use tail — this file can be 200MB+ from browser relay spam
+      stderrLogs = run(`tail -200 "${errLogPath}" 2>/dev/null`);
+      const icon = errLogSizeMB > 50 ? c.yellow('⚠️') : c.green('✅');
+      console.log(`   ${icon} Error log found (${errLogSizeMB}MB${errLogSizeMB > 50 ? ' — OVERSIZED!' : ''})`);
     } catch {}
+  }
+
+  // --- Service Health (launchd / systemd) ---
+  console.log('');
+  console.log(c.blue('🔧 Checking service health...'));
+
+  let serviceHealth = {};
+  const isMac = osName === 'darwin';
+  const isLinux = osName === 'linux';
+
+  if (isMac) {
+    const uid = run('id -u');
+    const launchdInfo = run(`launchctl print gui/${uid}/ai.openclaw.gateway 2>/dev/null`);
+    if (launchdInfo) {
+      const runsMatch = launchdInfo.match(/runs = (\d+)/);
+      const pidMatch = launchdInfo.match(/pid = (\d+)/);
+      const stateMatch = launchdInfo.match(/state = (running|waiting|not running)/);
+      const exitCodeMatch = launchdInfo.match(/last exit code = (\d+)/);
+      serviceHealth = {
+        manager: 'launchd',
+        runs: runsMatch ? parseInt(runsMatch[1]) : 0,
+        pid: pidMatch ? parseInt(pidMatch[1]) : 0,
+        state: stateMatch ? stateMatch[1] : 'unknown',
+        lastExitCode: exitCodeMatch ? parseInt(exitCodeMatch[1]) : null,
+      };
+      // Check uptime of current PID
+      if (serviceHealth.pid) {
+        const elapsed = run(`ps -p ${serviceHealth.pid} -o etime= 2>/dev/null`).trim();
+        serviceHealth.uptimeStr = elapsed;
+        // Parse elapsed to seconds (format: [[dd-]hh:]mm:ss)
+        const parts = elapsed.replace(/-/g, ':').split(':').reverse().map(Number);
+        serviceHealth.uptimeSeconds = (parts[0] || 0) + (parts[1] || 0) * 60 + (parts[2] || 0) * 3600 + (parts[3] || 0) * 86400;
+      }
+      const runsIcon = serviceHealth.runs > 2 ? c.yellow('⚠️') : c.green('✅');
+      console.log(`   ${runsIcon} LaunchAgent: ${serviceHealth.state} (${serviceHealth.runs} run(s), PID ${serviceHealth.pid || 'none'})`);
+      if (serviceHealth.uptimeStr) console.log(`   Uptime: ${serviceHealth.uptimeStr}`);
+      if (serviceHealth.runs > 2) console.log(c.yellow(`   ⚠️  Multiple restarts detected — possible crash loop`));
+    } else {
+      console.log(c.dim('   LaunchAgent not found'));
+    }
+  } else if (isLinux) {
+    const systemdInfo = run('systemctl show openclaw-gateway --property=NRestarts,ActiveState,SubState,ExecMainPID,ExecMainStartTimestamp 2>/dev/null');
+    if (systemdInfo) {
+      const props = {};
+      systemdInfo.split('\n').forEach(l => {
+        const [k, v] = l.split('=', 2);
+        if (k && v) props[k.trim()] = v.trim();
+      });
+      serviceHealth = {
+        manager: 'systemd',
+        nRestarts: parseInt(props.NRestarts) || 0,
+        state: props.ActiveState || 'unknown',
+        subState: props.SubState || 'unknown',
+        pid: parseInt(props.ExecMainPID) || 0,
+      };
+      console.log(`   systemd: ${serviceHealth.state}/${serviceHealth.subState} (${serviceHealth.nRestarts} restart(s))`);
+    } else {
+      console.log(c.dim('   systemd service not found'));
+    }
+  } else {
+    console.log(c.dim('   Service manager detection not available on this OS'));
   }
 
   // --- Plugins ---
@@ -308,6 +384,47 @@ Examples:
   if (/EADDRINUSE/i.test(errorLogs)) {
     issues.push({ severity: 'critical', text: 'Port conflict detected' });
   }
+
+  // Auto-update restart loop detection
+  const sigtermCount = (gatewayLogTail.match(/signal SIGTERM/gi) || []).length;
+  const restartCount = (gatewayLogTail.match(/listening.*PID/gi) || []).length;
+  if (config?.update?.auto?.enabled === true && (sigtermCount >= 2 || restartCount >= 3)) {
+    issues.push({ severity: 'critical', text: 'Auto-update causing gateway restart loop' });
+  } else if (config?.update?.auto?.enabled === true) {
+    issues.push({ severity: 'medium', text: 'Auto-update enabled (risk of restart loops)' });
+  }
+
+  // Config reload cascade
+  const reloadCount = (gatewayLogTail.match(/config change detected.*evaluating reload/gi) || []).length;
+  if (reloadCount >= 3) {
+    issues.push({ severity: 'high', text: `Config reload cascade detected (${reloadCount} reloads in recent logs)` });
+  }
+
+  // Service manager crash loop
+  if (serviceHealth.runs > 2 && (serviceHealth.uptimeSeconds || 0) < 300) {
+    issues.push({ severity: 'critical', text: `Gateway crash loop — ${serviceHealth.runs} restarts, only ${serviceHealth.uptimeStr} uptime` });
+  } else if ((serviceHealth.nRestarts || 0) > 0) {
+    issues.push({ severity: 'high', text: `Gateway has restarted ${serviceHealth.nRestarts} time(s) (systemd)` });
+  }
+
+  // Browser Relay handshake spam
+  const handshakeSpam = (stderrLogs.match(/invalid handshake.*chrome-extension|closed before connect.*chrome-extension/gi) || []).length;
+  if (handshakeSpam >= 5) {
+    issues.push({ severity: 'medium', text: 'Browser Relay extension spamming invalid handshakes' });
+  }
+
+  // Oversized error log
+  if (errLogSizeMB > 50) {
+    issues.push({ severity: 'medium', text: `Error log is ${errLogSizeMB}MB (should be <50MB)` });
+  }
+
+  // Matrix timeout spam
+  const matrixTimeouts = (stderrLogs.match(/ESOCKETTIMEDOUT/gi) || []).length;
+  if (matrixTimeouts >= 3) {
+    issues.push({ severity: 'low', text: 'Matrix sync timeouts spamming error log' });
+  }
+
+  // Existing checks
   if (config?.plugins?.entries?.['openclaw-mem0']?.config?.enableGraph === true) {
     issues.push({ severity: 'high', text: 'Mem0 enableGraph requires Pro plan (will silently fail)' });
   }
@@ -368,7 +485,11 @@ Examples:
     logs: {
       errors: errorLogs,
       stderr: stderrLogs,
+      gatewayLog: gatewayLogTail,
+      errLogSizeMB,
+      logSizeMB,
     },
+    service: serviceHealth,
     workspace: {
       path: workspaceDir || 'unknown',
       mdFiles,
