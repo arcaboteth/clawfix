@@ -26,7 +26,7 @@ const LS_CONFIG = {
   webhookSecret: process.env.LEMONSQUEEZY_WEBHOOK_SECRET,
 };
 
-const WALLET = process.env.PAYMENT_WALLET || '0x1be93C700dDC596D701E8F2106B8F9166C625Adb';
+const WALLET = process.env.PAYMENT_WALLET || '';
 
 // Create a checkout session for a fix
 paymentRouter.post('/checkout', async (req, res) => {
