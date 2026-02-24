@@ -116,7 +116,7 @@ diagnoseRouter.post('/diagnose', async (req, res) => {
     res.status(500).json({
       error: 'Diagnosis failed',
       message: error.message,
-      hint: 'If this persists, report at https://github.com/arcaboteth/clawfix/issues'
+      hint: 'If this persists, report at https://github.com/arcabotai/clawfix/issues'
     });
   }
 });

@@ -15,7 +15,7 @@ scriptRouter.get('/fix/sha256', (req, res) => {
   res.json({
     sha256: SCRIPT_HASH,
     verify: 'curl -sSL clawfix.dev/fix | shasum -a 256',
-    note: 'Compare this hash with the one in the GitHub repo: https://github.com/arcaboteth/clawfix/blob/main/SCRIPT_HASH',
+    note: 'Compare this hash with the one in the GitHub repo: https://github.com/arcabotai/clawfix/blob/main/SCRIPT_HASH',
   });
 });
 
@@ -46,7 +46,7 @@ const DIAGNOSTIC_SCRIPT = `#!/usr/bin/env bash
 #   npx clawfix                 # Interactive scan
 #   npx clawfix --dry-run       # See what data would be collected
 #
-# Source code: https://github.com/arcaboteth/clawfix
+# Source code: https://github.com/arcabotai/clawfix
 
 set -euo pipefail
 
@@ -471,7 +471,7 @@ fi
 
 echo ""
 echo -e "\${CYAN}🦞 ClawFix — made by Arca (arcabot.eth)\${NC}"
-echo -e "\${CYAN}   https://clawfix.dev | https://x.com/arcaboteth\${NC}"
+echo -e "\${CYAN}   https://clawfix.dev | https://x.com/arcabotai\${NC}"
 echo ""
 `;
 

@@ -105,7 +105,7 @@ Security:
   • Your hostname is SHA-256 hashed (only first 8 chars sent)
   • No file contents are read (only existence checks)
   • Nothing is sent without your explicit approval (unless --yes)
-  • Source code: https://github.com/arcaboteth/clawfix
+  • Source code: https://github.com/arcabotai/clawfix
 
 Examples:
   npx clawfix                  # Interactive scan + optional AI analysis
@@ -398,7 +398,7 @@ Examples:
     console.log(c.cyan('  npx clawfix'));
     console.log('');
     console.log(c.cyan('🦞 ClawFix — made by Arca (arcabot.eth)'));
-    console.log(c.cyan('   https://clawfix.dev | https://x.com/arcaboteth'));
+    console.log(c.cyan('   https://clawfix.dev | https://x.com/arcabotai'));
     console.log('');
     return;
   }
@@ -409,7 +409,7 @@ Examples:
     console.log(`If you're still having issues, run with --show-data to see what would be collected.`);
     console.log('');
     console.log(c.cyan(`🦞 ClawFix — made by Arca (arcabot.eth)`));
-    console.log(c.cyan(`   https://clawfix.dev | https://x.com/arcaboteth`));
+    console.log(c.cyan(`   https://clawfix.dev | https://x.com/arcabotai`));
     console.log('');
     return;
   }
@@ -499,7 +499,7 @@ Examples:
 
   console.log('');
   console.log(c.cyan('🦞 ClawFix — made by Arca (arcabot.eth)'));
-  console.log(c.cyan('   https://clawfix.dev | https://x.com/arcaboteth'));
+  console.log(c.cyan('   https://clawfix.dev | https://x.com/arcabotai'));
   console.log('');
 }
 

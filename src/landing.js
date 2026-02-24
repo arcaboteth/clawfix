@@ -359,7 +359,7 @@ const LANDING_HTML = `<!DOCTYPE html>
         <a href="#how">How It Works</a>
         <a href="#security">Security</a>
         <a href="#pricing">Pricing</a>
-        <a href="https://github.com/arcaboteth/clawfix">GitHub</a>
+        <a href="https://github.com/arcabotai/clawfix">GitHub</a>
       </nav>
     </div>
   </header>
@@ -386,7 +386,7 @@ const LANDING_HTML = `<!DOCTYPE html>
           <button class="copy-btn" id="copyBtn-npx">Copy</button>
         </div>
         <p class="command-hint" style="margin-bottom: 8px;">
-          <strong style="color:var(--green)">Recommended</strong> — auditable source on <a href="https://www.npmjs.com/package/clawfix" style="color:var(--muted)">npm</a> and <a href="https://github.com/arcaboteth/clawfix" style="color:var(--muted)">GitHub</a>
+          <strong style="color:var(--green)">Recommended</strong> — auditable source on <a href="https://www.npmjs.com/package/clawfix" style="color:var(--muted)">npm</a> and <a href="https://github.com/arcabotai/clawfix" style="color:var(--muted)">GitHub</a>
         </p>
         <p class="command-hint" style="margin-bottom: 4px;">Want to inspect before running? <code style="color:var(--green)">npx clawfix --dry-run</code></p>
         <p class="command-hint" style="margin-bottom: 48px;">Works on macOS, Linux, and WSL. Requires Node.js 18+.</p>
@@ -510,7 +510,7 @@ const LANDING_HTML = `<!DOCTYPE html>
             <span class="trust-icon">🔓</span>
             <div>
               <h4>100% Open Source</h4>
-              <p><a href="https://github.com/arcaboteth/clawfix" style="color:var(--blue)">Every line on GitHub</a>. CLI source, server code, diagnostic script — all public. Audit it.</p>
+              <p><a href="https://github.com/arcabotai/clawfix" style="color:var(--blue)">Every line on GitHub</a>. CLI source, server code, diagnostic script — all public. Audit it.</p>
             </div>
           </div>
           <div class="trust-item">
@@ -578,8 +578,8 @@ const LANDING_HTML = `<!DOCTYPE html>
   <footer>
     <div class="container">
       <div class="footer-links">
-        <a href="https://github.com/arcaboteth/clawfix">Source Code</a>
-        <a href="https://x.com/arcaboteth">@arcaboteth</a>
+        <a href="https://github.com/arcabotai/clawfix">Source Code</a>
+        <a href="https://x.com/arcabotai">@arcabotai</a>
         <a href="https://arcabot.ai">arcabot.ai</a>
       </div>
       <p>Made by <a href="https://arcabot.ai">Arca</a> (arcabot.eth) · Not affiliated with OpenClaw</p>

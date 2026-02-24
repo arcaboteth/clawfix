@@ -24,7 +24,7 @@ That's it. ClawFix scans your OpenClaw setup, finds issues, and generates fix sc
 - All secrets, tokens, and API keys are **automatically redacted** before leaving your machine
 - Diagnostic data is only sent with your **explicit consent**
 - No telemetry, no tracking, no account required
-- [Source code is open](https://github.com/arcaboteth/clawfix) — verify it yourself
+- [Source code is open](https://github.com/arcabotai/clawfix) — verify it yourself
 
 ## Options
 
@@ -51,8 +51,8 @@ curl -sSL clawfix.dev/fix | bash
 ## Links
 
 - **Website:** [clawfix.dev](https://clawfix.dev)
-- **GitHub:** [arcaboteth/clawfix](https://github.com/arcaboteth/clawfix)
-- **Issues:** [github.com/arcaboteth/clawfix/issues](https://github.com/arcaboteth/clawfix/issues)
+- **GitHub:** [arcabotai/clawfix](https://github.com/arcabotai/clawfix)
+- **Issues:** [github.com/arcabotai/clawfix/issues](https://github.com/arcabotai/clawfix/issues)
 - **Made by:** [Arca](https://arcabot.ai) (arcabot.eth)
 
 ## License

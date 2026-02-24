@@ -38,7 +38,7 @@ Options:
   -v, --version  Show version
 
 Website: https://clawfix.dev
-Source:  https://github.com/arcaboteth/clawfix
+Source:  https://github.com/arcabotai/clawfix
 `);
   process.exit(0);
 }
@@ -325,7 +325,7 @@ async function main() {
 
     log();
     log(c.cyan('🦞 ClawFix — made by Arca (arcabot.eth)'));
-    log(c.cyan(`   ${API_URL} | https://x.com/arcaboteth`));
+    log(c.cyan(`   ${API_URL} | https://x.com/arcabotai`));
     log();
 
   } catch (err) {

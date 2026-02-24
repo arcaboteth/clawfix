@@ -194,7 +194,7 @@ function resultsPage(fixId) {
         html += '<div class="payment" style="border-color: var(--green);">';
         html += '<h3>🎉 Free During Beta!</h3>';
         html += '<p>This diagnosis is on us. Enjoy full AI analysis for free while we\\'re in early access.<br>';
-        html += 'Like ClawFix? Star us on <a href="https://github.com/arcaboteth/clawfix" style="color:var(--green)">GitHub</a> — it helps a lot.</p>';
+        html += 'Like ClawFix? Star us on <a href="https://github.com/arcabotai/clawfix" style="color:var(--green)">GitHub</a> — it helps a lot.</p>';
         html += '</div>';
       }
 
