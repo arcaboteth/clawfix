@@ -59,6 +59,11 @@ export async function initDB() {
       DO $$ BEGIN
         ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS ai_insights TEXT;
         ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS known_issues_detail JSONB DEFAULT '[]';
+        ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS service_manager TEXT;
+        ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS service_state TEXT;
+        ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS service_exit_code TEXT;
+        ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS err_log_size_mb INTEGER;
+        ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS sigterm_count INTEGER;
       EXCEPTION WHEN duplicate_column THEN NULL;
       END $$;
 
@@ -118,8 +123,9 @@ export async function storeDiagnosis(result, source = 'cli') {
   try {
     await db.query(`
       INSERT INTO diagnoses (id, host_hash, os, arch, node_version, openclaw_version,
-        issues_pattern, issues_ai, issues_count, ai_model, fix_script, ai_summary, ai_insights, known_issues_detail, source)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        issues_pattern, issues_ai, issues_count, ai_model, fix_script, ai_summary, ai_insights, known_issues_detail,
+        service_manager, service_state, service_exit_code, err_log_size_mb, sigterm_count, source)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
     `, [
       result.fixId,
       result._hostHash || null,
@@ -135,6 +141,11 @@ export async function storeDiagnosis(result, source = 'cli') {
       result.analysis || null,
       result.aiInsights || null,
       JSON.stringify(result.knownIssues || []),
+      result._serviceManager || null,
+      result._serviceState || null,
+      result._serviceExitCode || null,
+      result._errLogSizeMB || null,
+      result._sigtermCount || null,
       source,
     ]);
 
@@ -231,6 +242,13 @@ export async function getDiagnosis(fixId) {
       fixScript: row.fix_script || null,
       aiInsights: row.ai_insights || '',
       model: row.ai_model || 'pattern-matching',
+      systemInfo: {
+        os: row.os ? `${row.os} (${row.arch || ''})` : null,
+        nodeVersion: row.node_version || null,
+        openclawVersion: row.openclaw_version || null,
+        serviceManager: row.service_manager || null,
+        serviceState: row.service_state || null,
+      },
     };
   } catch (err) {
     console.error('Get diagnosis failed:', err.message);
@@ -246,12 +264,15 @@ export async function getStats() {
   if (!db) return null;
 
   try {
-    const [total, today, topIssues, versions, outcomes] = await Promise.all([
+    const [total, today, topIssues, versions, outcomes, serviceManagers, sigterms, zombies] = await Promise.all([
       db.query('SELECT COUNT(*) as count FROM diagnoses'),
       db.query("SELECT COUNT(*) as count FROM diagnoses WHERE created_at > NOW() - INTERVAL '24 hours'"),
       db.query('SELECT id, title, severity, times_detected, success_rate FROM patterns ORDER BY times_detected DESC LIMIT 10'),
       db.query('SELECT openclaw_version, COUNT(*) as count FROM diagnoses WHERE openclaw_version IS NOT NULL GROUP BY openclaw_version ORDER BY count DESC LIMIT 5'),
       db.query("SELECT outcome, COUNT(*) as count FROM diagnoses GROUP BY outcome"),
+      db.query("SELECT service_manager, COUNT(*) as count FROM diagnoses WHERE service_manager IS NOT NULL GROUP BY service_manager ORDER BY count DESC"),
+      db.query("SELECT COUNT(*) as count FROM diagnoses WHERE sigterm_count > 0 OR service_state = 'sigterm'"),
+      db.query("SELECT COUNT(*) as count FROM diagnoses WHERE service_state = 'crashed' OR service_state = 'failed'"),
     ]);
 
     return {
@@ -260,6 +281,9 @@ export async function getStats() {
       topIssues: topIssues.rows,
       versionBreakdown: versions.rows,
       outcomes: outcomes.rows,
+      serviceManagerBreakdown: serviceManagers.rows,
+      sigtermCrashes: parseInt(sigterms.rows[0].count),
+      zombieProcesses: parseInt(zombies.rows[0].count),
     };
   } catch (err) {
     console.error('Get stats failed:', err.message);

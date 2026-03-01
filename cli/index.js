@@ -14,11 +14,11 @@ import { readFileSync, existsSync, readdirSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 
-const VERSION = '0.1.0';
+const VERSION = '0.4.0';
 const DEFAULT_API = 'https://clawfix.dev';
 const ARGS = process.argv.slice(2);
 const JSON_MODE = ARGS.includes('--json');
-const NO_SEND = ARGS.includes('--no-send');
+const NO_SEND = ARGS.includes('--no-send') || ARGS.includes('--dry-run');
 const API_URL = ARGS.find(a => a.startsWith('--server='))?.split('=')[1] 
   || ARGS[ARGS.indexOf('--server') + 1] 
   || DEFAULT_API;
@@ -31,6 +31,7 @@ Usage:
   npx clawfix              Run diagnostic and get AI fix
   npx clawfix --json       Machine-readable JSON output
   npx clawfix --no-send    Scan only (don't send to API)
+  npx clawfix --dry-run    Same as --no-send (inspect data only)
   npx clawfix --server URL Use custom API server
 
 Options:
@@ -159,26 +160,95 @@ async function main() {
   const gatewayStatus = ocBin ? run(`${ocBin} gateway status 2>&1`) : 'unknown';
   const gatewayPid = run('pgrep -f "openclaw.*gateway" 2>/dev/null | head -1');
   const gatewayPort = rawConfig?.gateway?.port || '18789';
-  log(`   Status: ${gatewayStatus.split('\n')[0]}`);
-  if (gatewayPid) log(`   PID: ${gatewayPid}`);
-  log(`   Port: ${gatewayPort}`);
+  // Check if port is actually listening (zombie detection)
+  const portListening = !!run(`lsof -i :${gatewayPort} 2>/dev/null | head -1`) ||
+    !!run(`ss -tlnp 2>/dev/null | grep ":${gatewayPort} "`);
+  const processExists = !!gatewayPid;
 
-  // 5. Logs
+  log(`   Status: ${gatewayStatus.split('\n')[0]}`);
+  if (gatewayPid) log(`   PID: ${gatewayPid} (exists: ${processExists})`);
+  log(`   Port: ${gatewayPort} (listening: ${portListening})`);
+  if (processExists && !portListening) {
+    log(c.red(`   ⚠️  Zombie gateway: process exists but port not listening`));
+  }
+
+  // 5. Service manager detection
+  log();
+  log(c.blue('🔧 Checking service manager...'));
+  const osName = system.os;
+  let serviceManager = 'none';
+  let serviceState = '';
+  let serviceExitCode = '';
+
+  if (osName === 'Darwin') {
+    serviceManager = 'launchd';
+    const launchctlOut = run('launchctl list 2>/dev/null | grep -i openclaw');
+    if (launchctlOut) {
+      const parts = launchctlOut.split(/\s+/);
+      const svcPid = parts[0];
+      serviceExitCode = parts[1] || '';
+      if (serviceExitCode === '-15') {
+        serviceState = 'sigterm';
+        log(c.red('   ⚠️  Service received SIGTERM (exit -15) — possible crash loop'));
+      } else if (serviceExitCode === '0' && svcPid !== '-') {
+        serviceState = 'running';
+        log(c.green(`   ✅ launchd: running (pid ${svcPid})`));
+      } else if (svcPid === '-' && serviceExitCode !== '0') {
+        serviceState = 'crashed';
+        log(c.red(`   ❌ launchd: not running (last exit: ${serviceExitCode})`));
+      } else {
+        serviceState = 'unknown';
+        log(c.yellow(`   ⚠️  launchd state unclear: ${launchctlOut}`));
+      }
+    } else {
+      serviceState = 'not_registered';
+      log(c.yellow('   ⚠️  No openclaw LaunchAgent found in launchctl'));
+    }
+  } else if (run('command -v systemctl')) {
+    serviceManager = 'systemd';
+    const systemctlOut = run('systemctl status openclaw-gateway 2>/dev/null | head -10');
+    if (systemctlOut.includes('active (running)')) {
+      serviceState = 'running';
+      log(c.green('   ✅ systemd: active (running)'));
+    } else if (systemctlOut.includes('failed')) {
+      serviceState = 'failed';
+      log(c.red('   ❌ systemd: failed'));
+    } else if (systemctlOut.includes('inactive')) {
+      serviceState = 'inactive';
+      log(c.yellow('   ⚠️  systemd: inactive (stopped)'));
+    }
+  } else {
+    log('   No service manager detected');
+  }
+
   log();
   log(c.blue('📜 Reading recent logs...'));
   const logDir = ocDir ? join(ocDir, 'logs') : '';
   let errorLogs = '';
   let stderrLogs = '';
+  let errLogSizeMB = 0;
+  let handshakeTimeoutCount = 0;
+  let sigtermCount = 0;
+
   if (logDir && existsSync(join(logDir, 'gateway.log'))) {
     errorLogs = run(`grep -i "error\\|warn\\|fail\\|crash\\|EADDRINUSE" ${join(logDir, 'gateway.log')} | tail -30`);
+    sigtermCount = parseInt(run(`grep -c "signal SIGTERM received\\|exit code -15" ${join(logDir, 'gateway.log')} 2>/dev/null`)) || 0;
     log(c.green('   ✅ Gateway log found'));
+    if (sigtermCount > 0) log(c.yellow(`   ⚠️  ${sigtermCount} SIGTERM events in gateway log`));
   }
   if (logDir && existsSync(join(logDir, 'gateway.err.log'))) {
     stderrLogs = run(`tail -50 ${join(logDir, 'gateway.err.log')}`);
-    log(c.green('   ✅ Error log found'));
+    errLogSizeMB = parseInt(run(`du -sm ${join(logDir, 'gateway.err.log')} 2>/dev/null | awk '{print $1}'`)) || 0;
+    handshakeTimeoutCount = parseInt(run(`grep -c "invalid handshake\\|closed before connect\\|chrome-extension.*timeout" ${join(logDir, 'gateway.err.log')} 2>/dev/null`)) || 0;
+    if (errLogSizeMB > 10) {
+      log(c.yellow(`   ⚠️  Error log is ${errLogSizeMB}MB (large — likely log spam)`));
+    } else {
+      log(c.green(`   ✅ Error log found (${errLogSizeMB}MB)`));
+    }
+    if (handshakeTimeoutCount > 0) log(c.yellow(`   ⚠️  ${handshakeTimeoutCount} handshake timeout lines`));
   }
 
-  // 6. Plugins
+  // 7. Plugins
   log();
   log(c.blue('🔌 Checking plugins...'));
   const plugins = rawConfig?.plugins?.entries || {};
@@ -187,7 +257,7 @@ async function main() {
     log(`   ${enabled ? '✅' : '❌'} ${name}`);
   }
 
-  // 7. Workspace
+  // 8. Workspace
   log();
   log(c.blue('📁 Checking workspace...'));
   const workspacePath = rawConfig?.agents?.defaults?.workspace || '';
@@ -207,7 +277,7 @@ async function main() {
     log(`   SOUL.md: ${hasSoul}, AGENTS.md: ${hasAgents}`);
   }
 
-  // 8. Ports
+  // 9. Ports
   log();
   log(c.blue('🔗 Checking ports...'));
   for (const [port, name] of [[gatewayPort, 'gateway'], ['18800', 'browser CDP'], ['18791', 'browser control']]) {
@@ -215,7 +285,7 @@ async function main() {
     log(`   ${inUse ? c.yellow(`⚠️  Port ${port} (${name}) — IN USE`) : c.green(`✅ Port ${port} (${name}) — available`)}`);
   }
 
-  // 9. Browser
+  // 10. Browser
   const browserDir = ocDir ? join(ocDir, 'browser') : '';
   const browserStatus = browserDir && existsSync(browserDir) ? 'configured' : 'not configured';
 
@@ -232,9 +302,22 @@ async function main() {
       gatewayStatus,
       gatewayPid: gatewayPid || 'none',
       gatewayPort,
+      processExists,
+      portListening,
+    },
+    service: {
+      manager: serviceManager,
+      state: serviceState || 'unknown',
+      exitCode: serviceExitCode,
     },
     config,
-    logs: { errors: errorLogs, stderr: stderrLogs },
+    logs: {
+      errors: errorLogs,
+      stderr: stderrLogs,
+      errLogSizeMB,
+      handshakeTimeoutCount,
+      sigtermCount,
+    },
     workspace: {
       path: workspacePath || 'unknown',
       mdFiles, memoryFiles,
@@ -259,7 +342,7 @@ async function main() {
     process.exit(0);
   }
 
-  // 10. Send to API
+  // 11. Send to API
   log();
   log(c.cyan('━'.repeat(52)));
   log(c.bold('📡 Sending diagnostic for AI analysis...'));

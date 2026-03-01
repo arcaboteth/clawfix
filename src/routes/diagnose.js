@@ -119,12 +119,26 @@ diagnoseRouter.post('/diagnose', async (req, res) => {
       fixScript,
       aiInsights: aiAnalysis.insights || '',
       model: AI_CONFIG.model,
+      systemInfo: {
+        os: diagnostic.system?.os ? `${diagnostic.system.os} ${diagnostic.system.osVersion || ''} (${diagnostic.system.arch || ''})` : null,
+        nodeVersion: diagnostic.system?.nodeVersion || null,
+        openclawVersion: diagnostic.openclaw?.version || null,
+        serviceManager: diagnostic.service?.manager || null,
+        serviceState: diagnostic.service?.state || null,
+      },
       // Internal metadata for DB (not sent to client)
       _hostHash: diagnostic.hostHash,
       _os: diagnostic.system?.os,
       _arch: diagnostic.system?.arch,
       _nodeVersion: diagnostic.system?.nodeVersion,
       _openclawVersion: diagnostic.openclaw?.version,
+      _serviceManager: diagnostic.service?.manager || null,
+      _serviceState: diagnostic.service?.state || null,
+      _serviceExitCode: diagnostic.service?.exitCode || null,
+      _errLogSizeMB: diagnostic.logs?.errLogSizeMB || 0,
+      _sigtermCount: diagnostic.logs?.sigtermCount || 0,
+      _processExists: diagnostic.openclaw?.processExists ?? null,
+      _portListening: diagnostic.openclaw?.portListening ?? null,
       _aiIssues: aiAnalysis.additionalIssues || [],
     };
 
@@ -141,7 +155,7 @@ diagnoseRouter.post('/diagnose', async (req, res) => {
     }
 
     // Strip internal metadata before sending to client
-    const { _hostHash, _os, _arch, _nodeVersion, _openclawVersion, _aiIssues, ...clientResult } = result;
+    const { _hostHash, _os, _arch, _nodeVersion, _openclawVersion, _serviceManager, _serviceState, _serviceExitCode, _errLogSizeMB, _sigtermCount, _processExists, _portListening, _aiIssues, ...clientResult } = result;
     res.json(clientResult);
   } catch (error) {
     console.error('Diagnosis error:', error);
@@ -178,7 +192,7 @@ diagnoseRouter.get('/fix/:fixId', async (req, res) => {
   }
   
   // Strip internal metadata
-  const { _hostHash, _os, _arch, _nodeVersion, _openclawVersion, _aiIssues, ...clientFix } = fix;
+  const { _hostHash, _os, _arch, _nodeVersion, _openclawVersion, _serviceManager, _serviceState, _serviceExitCode, _errLogSizeMB, _sigtermCount, _processExists, _portListening, _aiIssues, ...clientFix } = fix;
   res.json(clientFix);
 });
 
@@ -192,6 +206,9 @@ diagnoseRouter.get('/stats', async (req, res) => {
     topIssues: dbStats?.topIssues || [],
     versionBreakdown: dbStats?.versionBreakdown || [],
     outcomes: dbStats?.outcomes || [],
+    serviceManagerBreakdown: dbStats?.serviceManagerBreakdown || [],
+    sigtermCrashes: dbStats?.sigtermCrashes || 0,
+    zombieProcesses: dbStats?.zombieProcesses || 0,
     uptime: process.uptime(),
     version: '0.4.0',
     aiProvider: AI_CONFIG.provider,

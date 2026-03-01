@@ -8,7 +8,7 @@ landingRouter.get('/', (req, res) => {
     return res.json({
       name: 'ClawFix',
       tagline: 'AI-powered OpenClaw repair',
-      version: '0.2.0',
+      version: '0.4.0',
       fix: 'curl -sSL clawfix.dev/fix | bash',
     });
   }
@@ -462,6 +462,34 @@ const LANDING_HTML = `<!DOCTYPE html>
               <p>Metal GPU crashes, Apple Silicon issues, Peekaboo</p>
             </div>
           </div>
+          <div class="issue-item">
+            <span class="issue-icon">🔧</span>
+            <div>
+              <h4>Service Manager Crashes</h4>
+              <p>launchd/systemd SIGTERM recovery, crash loops, backoff detection</p>
+            </div>
+          </div>
+          <div class="issue-item">
+            <span class="issue-icon">👻</span>
+            <div>
+              <h4>Zombie Processes</h4>
+              <p>PID exists but port not listening — stale gateway detection</p>
+            </div>
+          </div>
+          <div class="issue-item">
+            <span class="issue-icon">📜</span>
+            <div>
+              <h4>Error Log Bloat</h4>
+              <p>Chrome extension spam, handshake storms, 200MB+ log files</p>
+            </div>
+          </div>
+          <div class="issue-item">
+            <span class="issue-icon">🐕</span>
+            <div>
+              <h4>Gateway Watchdog</h4>
+              <p>Recommends independent health checks to avoid launchd backoff gaps</p>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -473,7 +501,7 @@ const LANDING_HTML = `<!DOCTYPE html>
           <div class="price-card">
             <div class="price free-tag">Free</div>
             <h3>Quick Scan</h3>
-            <p>Pattern matching against 12+ known issues. Instant results, no AI needed.</p>
+            <p>Pattern matching against 30+ known issues. Instant results, no AI needed.</p>
             <p style="margin-top:8px;color:var(--green);font-size:0.8rem;font-weight:600;">Always free</p>
           </div>
           <div class="price-card featured">

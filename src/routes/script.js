@@ -472,6 +472,21 @@ if [ "\$MEMORY_FILES" -eq 0 ]; then
   ISSUE_LIST="\${ISSUE_LIST}   \${YELLOW}⚠️  No memory files found\${NC}\\n"
 fi
 
+# Zombie gateway detection
+if [ "\$PROCESS_EXISTS" = "true" ] && [ "\$PORT_LISTENING" = "false" ]; then
+  ISSUES=\$((ISSUES + 1))
+  ISSUE_LIST="\${ISSUE_LIST}   \${RED}❌ Zombie gateway: process exists (PID \${GATEWAY_PID}) but port not listening\${NC}\\n"
+fi
+
+# SIGTERM / crashed service warning
+if [ "\$SERVICE_STATE" = "sigterm" ]; then
+  ISSUES=\$((ISSUES + 1))
+  ISSUE_LIST="\${ISSUE_LIST}   \${RED}❌ Service received SIGTERM (exit -15) — crash loop or forced kill detected\${NC}\\n"
+elif [ "\$SERVICE_STATE" = "crashed" ] || [ "\$SERVICE_STATE" = "failed" ]; then
+  ISSUES=\$((ISSUES + 1))
+  ISSUE_LIST="\${ISSUE_LIST}   \${RED}❌ Service is in \${SERVICE_STATE} state (exit code: \${SERVICE_EXIT_CODE})\${NC}\\n"
+fi
+
 if [ \$ISSUES -eq 0 ]; then
   echo -e "\${GREEN}✅ No issues detected! Your OpenClaw looks healthy.\${NC}"
 else

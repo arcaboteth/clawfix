@@ -147,9 +147,25 @@ function resultsPage(fixId) {
     function renderResults(data) {
       const issues = data.knownIssues || [];
       const count = data.issuesFound || issues.length;
-      
+
       let html = '';
-      
+
+      // System Info section
+      if (data.systemInfo || data._systemInfo) {
+        const sys = data.systemInfo || data._systemInfo || {};
+        html += '<div class="summary" style="margin-bottom:16px">';
+        html += '<h2>🖥 System Info</h2>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;font-size:0.9rem">';
+        if (sys.os) html += '<div><span style="color:var(--muted)">OS:</span> ' + escapeHtml(sys.os) + '</div>';
+        if (sys.nodeVersion) html += '<div><span style="color:var(--muted)">Node:</span> ' + escapeHtml(sys.nodeVersion) + '</div>';
+        if (sys.openclawVersion) html += '<div><span style="color:var(--muted)">OpenClaw:</span> ' + escapeHtml(sys.openclawVersion) + '</div>';
+        if (sys.serviceManager) {
+          var smColor = sys.serviceState === 'running' ? 'var(--green)' : (sys.serviceState === 'sigterm' || sys.serviceState === 'crashed' || sys.serviceState === 'failed') ? 'var(--red)' : 'var(--yellow)';
+          html += '<div><span style="color:var(--muted)">Service:</span> ' + escapeHtml(sys.serviceManager) + ' <span style="color:' + smColor + '">(' + escapeHtml(sys.serviceState || 'unknown') + ')</span></div>';
+        }
+        html += '</div></div>';
+      }
+
       // Summary
       html += '<div class="summary">';
       html += '<h2>' + (count === 0 ? '✅ No Issues Found' : '🔍 Found ' + count + ' Issue' + (count > 1 ? 's' : '')) + '</h2>';
@@ -159,8 +175,9 @@ function resultsPage(fixId) {
       // Issues list
       if (issues.length > 0) {
         issues.forEach(issue => {
-          html += '<div class="issue">';
-          html += '<h3><span class="badge badge-' + issue.severity + '">' + issue.severity + '</span> ' + issue.title + '</h3>';
+          var borderColor = {critical: 'var(--red)', high: '#f97316', medium: 'var(--yellow)', low: 'var(--blue)'}[issue.severity] || 'var(--border)';
+          html += '<div class="issue" style="border-left:3px solid ' + borderColor + '">';
+          html += '<h3><span class="badge badge-' + issue.severity + '" style="font-size:0.8rem;padding:3px 10px">' + issue.severity.toUpperCase() + '</span> ' + issue.title + '</h3>';
           html += '<p>' + issue.description + '</p>';
           html += '</div>';
         });
@@ -186,6 +203,10 @@ function resultsPage(fixId) {
         html += '<pre id="fixScript">' + escapeHtml(data.fixScript) + '</pre>';
         html += '<p style="color:var(--muted);font-size:0.85rem;margin-top:8px">';
         html += '⚠️ Review the script before running it. Apply with: <code>bash fix.sh</code></p>';
+        if (data.systemInfo && data.systemInfo.os && data.systemInfo.os.includes('Darwin')) {
+          html += '<p style="color:var(--yellow);font-size:0.85rem;margin-top:8px">';
+          html += '🍎 macOS detected — fix scripts may use <code>launchctl unload/load</code> for gateway recovery instead of <code>openclaw gateway restart</code>.</p>';
+        }
         html += '</div>';
       }
 

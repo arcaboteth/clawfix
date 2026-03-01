@@ -30,10 +30,10 @@ bash clawfix.sh                         # Run after reviewing
 ## How It Works
 
 1. **Run one command** — The diagnostic script scans your OpenClaw config, logs, plugins, and ports
-2. **AI analyzes** — Pattern matching catches 12+ known issues instantly. AI handles novel problems
+2. **AI analyzes** — Pattern matching catches 30+ known issues instantly. AI handles novel problems
 3. **Review & apply** — You get a commented fix script. Nothing runs without your approval
 
-## What It Detects
+## What It Detects (v0.4.0)
 
 - 💀 Gateway crashes (port conflicts, process hangs, restart loops)
 - 🧠 Memory issues (Mem0 silent failures, missing flush, broken search)
@@ -41,6 +41,10 @@ bash clawfix.sh                         # Run after reviewing
 - 🔌 Plugin configs (broken plugins, wrong settings)
 - 💸 Token waste (excessive heartbeats, no pruning, bloated context)
 - 🍎 macOS quirks (Metal GPU crashes, Apple Silicon issues)
+- 🔧 Service manager crashes (launchd/systemd SIGTERM recovery, crash loops)
+- 👻 Zombie processes (PID exists but port not listening)
+- 📜 Error log bloat (chrome extension spam, handshake storms)
+- 🐕 Gateway watchdog recommendations (independent health checks)
 
 ## Security & Transparency
 
@@ -93,10 +97,12 @@ curl -s clawfix.dev/fix/sha256
 ```
 npx clawfix [options]
 
-  --dry-run, -n    Scan locally, show what would be collected, send nothing
-  --show-data, -d  Display full diagnostic payload before asking to send
-  --yes, -y        Skip confirmation (for CI/automation)
+  --dry-run        Scan locally, show what would be collected, send nothing
+  --no-send        Same as --dry-run
+  --json           Machine-readable JSON output
+  --server URL     Use custom API server
   --help, -h       Show help
+  --version, -v    Show version
 ```
 
 ## Self-Hosting
@@ -142,7 +148,7 @@ CLAWFIX_API=http://localhost:3001 npx clawfix
 
 ## Pricing
 
-- **Free** — Pattern matching scan (12+ known issues)
+- **Free** — Pattern matching scan (30+ known issues)
 - **$2** — AI-powered analysis + fix script *(free during beta)*
 - **$9/mo** — Continuous monitoring *(coming soon)*
 
