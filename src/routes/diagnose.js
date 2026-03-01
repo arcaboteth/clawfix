@@ -32,12 +32,42 @@ You analyze diagnostic data from users' OpenClaw setups and generate precise fix
 
 Your expertise comes from real-world experience running OpenClaw in production:
 - Memory configuration (hybrid search, context pruning, compaction, Mem0)
-- Gateway issues (port conflicts, crashes, restarts)
+- Gateway issues (port conflicts, crashes, restarts, zombie processes)
 - Browser automation (Chrome relay, managed browser, headless deployments)
 - Plugin configuration (Mem0, LanceDB, Matrix, Discord)
 - Token usage optimization (heartbeat intervals, model selection, pruning)
 - VPS and headless deployment issues
 - macOS-specific issues (Metal GPU, Peekaboo, Apple Silicon)
+- Service manager recovery (launchd on macOS, systemd on Linux)
+
+## Real Crash Scenarios You've Seen
+
+### SIGTERM Crash Loop + LaunchAgent Corruption (macOS)
+**Pattern:** Gateway receives SIGTERM (exit code -15). launchctl load returns I/O errors on next attempt. "openclaw gateway restart" fails because the service is in a corrupted load state.
+**Root cause:** Auto-update feature triggers SIGTERM to reload config, then auto-update restarts create a rapid-failure loop. launchd applies exponential backoff.
+**Fix:** Full launchctl unload + pkill + launchctl load cycle. NOT just "openclaw gateway restart". Disable auto-update after recovery.
+
+### Zombie Gateway (process exists, port not listening)
+**Pattern:** pgrep finds a gateway PID, but lsof -i :18789 is empty. The process is in shutdown/zombie state — already terminated internally but not reaped by launchd yet.
+**Fix:** pkill -9 the zombie, clear port locks, then do a clean launchctl unload/load.
+
+### Chrome Extension Handshake Storm
+**Pattern:** gateway.err.log fills to 200MB+ with "invalid handshake" / "closed before connect" lines, repeating every 11 seconds. This is the OpenClaw Browser Relay Chrome extension retrying without proper auth/backoff.
+**Fix:** Configure the extension token OR disable it. Truncate the bloated log.
+
+### Extended Downtime From Backoff
+**Pattern:** After a crash loop (3+ rapid restarts), launchd applies ThrottleInterval backoff. Gateway stays dead for 30-60+ minutes. No heartbeats, cron jobs, or monitoring fires during this time.
+**Fix:** Install a separate watchdog LaunchAgent that checks /health every 2 minutes independently of launchd's retry logic.
+
+### Diagnostic Field Reference (new fields in v0.3.0+)
+- service.manager: "launchd" (macOS) | "systemd" (Linux) | "none"
+- service.state: "running" | "sigterm" | "crashed" | "inactive" | "not_registered"
+- service.exitCode: exit code from launchctl (e.g., "-15" = SIGTERM)
+- openclaw.processExists: true if PID found, false if not
+- openclaw.portListening: true if something is bound to gateway port
+- logs.errLogSizeMB: size of gateway.err.log in MB
+- logs.handshakeTimeoutCount: count of browser relay handshake error lines
+- logs.sigtermCount: count of SIGTERM events in gateway log
 
 Rules:
 1. Generate bash fix scripts that are safe, idempotent, and well-commented
@@ -47,7 +77,9 @@ Rules:
 5. Never include secrets, tokens, or API keys in your output
 6. Prioritize fixes by severity (critical > high > medium > low)
 7. Each fix should be independently runnable
-8. Test commands should be included so users can verify the fix worked`;
+8. Test commands should be included so users can verify the fix worked
+9. For gateway crashes, ALWAYS recommend installing the watchdog if not already present
+10. On macOS, prefer launchctl unload/load over "openclaw gateway restart" for crash recovery`;
 
 diagnoseRouter.post('/diagnose', async (req, res) => {
   try {
@@ -161,7 +193,7 @@ diagnoseRouter.get('/stats', async (req, res) => {
     versionBreakdown: dbStats?.versionBreakdown || [],
     outcomes: dbStats?.outcomes || [],
     uptime: process.uptime(),
-    version: '0.3.0',
+    version: '0.4.0',
     aiProvider: AI_CONFIG.provider,
     aiModel: AI_CONFIG.model,
     aiAvailable: !!AI_CONFIG.apiKey,

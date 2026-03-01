@@ -31,13 +31,33 @@ echo "✅ Mem0 graph disabled — autoCapture will now work on Free plan"`,
       const status = diag.openclaw?.gatewayStatus || '';
       // Check for explicit "running" indicators first — ignore config warnings
       if (/running.*pid|state active|listening/i.test(status)) return false;
+      // Don't double-report if zombie/corrupted-state is detected (more specific)
+      if (diag.openclaw?.processExists === true && diag.openclaw?.portListening === false) return false;
       return (/not running|failed to start|stopped|inactive/i.test(status)) ||
              (!diag.openclaw?.gatewayPid && !/warning/i.test(status));
     },
     fix: `# Fix: Restart the gateway
-openclaw gateway restart
-# If that fails, check logs:
-# cat ~/.openclaw/logs/gateway.err.log | tail -20`,
+# Try standard restart first
+openclaw gateway restart 2>/dev/null && sleep 3 && echo "✅ Gateway restarted" && exit 0
+
+# If that fails, try full launchctl cycle (macOS)
+PLIST="\$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+if [ -f "\$PLIST" ]; then
+  echo "Standard restart failed — trying launchctl full reset..."
+  launchctl unload "\$PLIST" 2>/dev/null || true
+  sleep 2
+  launchctl load "\$PLIST"
+  sleep 3
+fi
+
+# Or systemd (Linux)
+if command -v systemctl &>/dev/null && systemctl list-unit-files openclaw-gateway.service &>/dev/null; then
+  sudo systemctl restart openclaw-gateway
+fi
+
+# Verify
+PORT=\$(jq -r '.gateway.port // 18789' ~/.openclaw/openclaw.json 2>/dev/null || echo "18789")
+curl -sf "http://localhost:\$PORT/health" && echo "✅ Gateway is healthy" || echo "❌ Still down — check: tail -30 ~/.openclaw/logs/gateway.err.log"`,
   },
 
   {
@@ -532,6 +552,234 @@ echo "To prevent this, identify the source of log spam:"
 echo "  tail -100 ~/.openclaw/logs/gateway.err.log | sort | uniq -c | sort -rn | head -5"
 echo ""
 echo "Common causes: Browser Relay handshake spam, Matrix sync timeouts"`,
+  },
+
+  // ─── Production crash scenarios (from real Feb 2026 crash report) ───
+
+  {
+    id: 'launchd-corrupted-state',
+    severity: 'critical',
+    title: 'LaunchAgent in corrupted state (SIGTERM crash loop)',
+    description: 'The gateway received SIGTERM (exit code -15) and the LaunchAgent entered a corrupted load state. Simple restart commands fail with I/O errors. Requires a full unload → load cycle via launchctl to recover.',
+    detect: (diag) => {
+      const serviceState = diag.service?.state || '';
+      const exitCode = diag.service?.exitCode || '';
+      const manager = diag.service?.manager || '';
+      const logs = (diag.logs?.errors || '') + (diag.logs?.stderr || '');
+      const sigtermInLogs = (diag.logs?.sigtermCount || 0) >= 1;
+      
+      // Direct detection: service says SIGTERM, or launchctl shows -15 exit
+      if (manager === 'launchd' && (serviceState === 'sigterm' || exitCode === '-15')) return true;
+      
+      // Also detect: gateway process doesn't exist AND last service state implies SIGTERM
+      if (manager === 'launchd' && !diag.openclaw?.processExists && sigtermInLogs) return true;
+      
+      // Error patterns: "I/O error" on launchctl, service "not found" after crash
+      if (/launchctl.*I\/O error|service.*not found.*load/i.test(logs)) return true;
+      
+      return false;
+    },
+    fix: `# Fix: LaunchAgent corrupted state — full unload + reload cycle
+echo "Performing full LaunchAgent reset..."
+echo ""
+
+PLIST="\$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+
+if [ ! -f "\$PLIST" ]; then
+  echo "❌ LaunchAgent plist not found at \$PLIST"
+  echo "Try running: openclaw gateway install"
+  exit 1
+fi
+
+echo "Step 1: Unload LaunchAgent (ignore errors)..."
+launchctl unload "\$PLIST" 2>/dev/null || true
+sleep 2
+
+echo "Step 2: Kill any zombie gateway processes..."
+pkill -f "openclaw.*gateway" 2>/dev/null || true
+sleep 1
+
+echo "Step 3: Load LaunchAgent fresh..."
+launchctl load "\$PLIST"
+sleep 3
+
+echo "Step 4: Verify gateway is up..."
+if curl -sf http://localhost:18789/health &>/dev/null; then
+  echo "✅ Gateway is up and healthy!"
+else
+  echo "⚠️  Gateway did not start within 3 seconds. Check logs:"
+  echo "   tail -30 ~/.openclaw/logs/gateway.err.log"
+  echo "   tail -30 ~/.openclaw/logs/gateway.log"
+fi`,
+  },
+
+  {
+    id: 'gateway-zombie',
+    severity: 'critical',
+    title: 'Zombie gateway process (PID exists but not listening)',
+    description: 'A gateway process exists in the process list but is NOT listening on the expected port. This typically happens after a SIGTERM or crash where the process is still visible but has already shut down internally. A simple restart won\'t work — the zombie must be killed first.',
+    detect: (diag) => {
+      const processExists = diag.openclaw?.processExists === true;
+      const portListening = diag.openclaw?.portListening === false || diag.openclaw?.portListening === 'false';
+      // Only flag if we have the processExists field (new diagnostic format) and it's contradictory
+      return processExists && portListening;
+    },
+    fix: `# Fix: Kill zombie gateway process and restart cleanly
+echo "Killing zombie gateway process..."
+pkill -9 -f "openclaw.*gateway" 2>/dev/null || true
+sleep 2
+
+echo "Clearing any stale port locks..."
+PORT=\$(jq -r '.gateway.port // 18789' ~/.openclaw/openclaw.json 2>/dev/null || echo "18789")
+PID=\$(lsof -ti :\$PORT 2>/dev/null)
+[ -n "\$PID" ] && kill -9 "\$PID" 2>/dev/null || true
+sleep 1
+
+echo "Restarting gateway..."
+if [ -f "\$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist" ]; then
+  # macOS: use launchctl for proper service management
+  launchctl unload "\$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist" 2>/dev/null || true
+  sleep 1
+  launchctl load "\$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+elif command -v systemctl &>/dev/null; then
+  systemctl restart openclaw-gateway
+else
+  openclaw gateway restart
+fi
+
+sleep 3
+
+if curl -sf http://localhost:\$PORT/health &>/dev/null; then
+  echo "✅ Gateway is now running and healthy!"
+else
+  echo "⚠️  Gateway not responding. Check:"
+  echo "   tail -20 ~/.openclaw/logs/gateway.err.log"
+fi`,
+  },
+
+  {
+    id: 'gateway-not-listening',
+    severity: 'critical',
+    title: 'Gateway port not listening',
+    description: 'The gateway is not listening on its configured port, even though the process may exist. This means no clients can connect — no heartbeats, no cron jobs, no channel messages. This can happen after a crash, SIGTERM, or config error.',
+    detect: (diag) => {
+      const portListening = diag.openclaw?.portListening;
+      // Only use this if we have the portListening field (new format)
+      if (portListening === undefined) return false;
+      const portNotListening = portListening === false || portListening === 'false';
+      const processNotExists = !diag.openclaw?.processExists || diag.openclaw?.processExists === 'false';
+      // Zombie case is handled by gateway-zombie; this handles clean non-running
+      return portNotListening && processNotExists;
+    },
+    fix: `# Fix: Gateway not listening — restart via service manager
+echo "Gateway is not listening. Attempting restart..."
+PORT=\$(jq -r '.gateway.port // 18789' ~/.openclaw/openclaw.json 2>/dev/null || echo "18789")
+
+if [ -f "\$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist" ]; then
+  echo "Using launchctl (macOS)..."
+  launchctl unload "\$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist" 2>/dev/null || true
+  sleep 1
+  launchctl load "\$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+elif command -v systemctl &>/dev/null && systemctl list-unit-files openclaw-gateway.service &>/dev/null; then
+  echo "Using systemctl (Linux)..."
+  sudo systemctl restart openclaw-gateway
+else
+  echo "Using openclaw CLI..."
+  openclaw gateway restart
+fi
+
+sleep 4
+if curl -sf "http://localhost:\$PORT/health" &>/dev/null; then
+  echo "✅ Gateway is now running!"
+else
+  echo "❌ Gateway still not responding. Check logs:"
+  echo "   tail -30 ~/.openclaw/logs/gateway.err.log"
+fi`,
+  },
+
+  {
+    id: 'gateway-watchdog-missing',
+    severity: 'high',
+    title: 'No gateway watchdog installed',
+    description: 'Your gateway has crashed before but there\'s no automatic watchdog to detect and recover from future crashes. The OS service manager uses exponential backoff on repeated failures, meaning the gateway can stay dead for hours without you knowing. A watchdog checks the health endpoint every 2 minutes and restarts if it\'s down.',
+    detect: (diag) => {
+      const manager = diag.service?.manager || '';
+      const sigtermCount = diag.logs?.sigtermCount || 0;
+      const serviceState = diag.service?.state || '';
+      
+      // Only suggest watchdog if: macOS + gateway has crashed before (SIGTERM or sigterm state)
+      const hasCrashed = sigtermCount >= 1 || serviceState === 'sigterm' || serviceState === 'crashed';
+      const hasPlist = manager === 'launchd';
+      
+      // Don't suggest if we can't tell (no service data)
+      return hasPlist && hasCrashed;
+    },
+    fix: `# Fix: Install a gateway watchdog LaunchAgent
+echo "Installing gateway health watchdog..."
+WATCHDOG_SCRIPT="\$HOME/.openclaw/scripts/gateway-watchdog.sh"
+WATCHDOG_PLIST="\$HOME/Library/LaunchAgents/ai.openclaw.gateway-watchdog.plist"
+PORT=\$(jq -r '.gateway.port // 18789' ~/.openclaw/openclaw.json 2>/dev/null || echo "18789")
+
+mkdir -p "\$HOME/.openclaw/scripts"
+
+# Create watchdog script
+cat > "\$WATCHDOG_SCRIPT" << 'WATCHDOG'
+#!/usr/bin/env bash
+# OpenClaw Gateway Watchdog
+# Checks health endpoint every 2 minutes, restarts if down
+
+PORT=\$(jq -r '.gateway.port // 18789' ~/.openclaw/openclaw.json 2>/dev/null || echo "18789")
+PLIST="\$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+LOG="\$HOME/.openclaw/logs/watchdog.log"
+
+if ! curl -sf "http://localhost:\$PORT/health" &>/dev/null; then
+  echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] Gateway DOWN — attempting recovery" >> "\$LOG"
+  launchctl unload "\$PLIST" 2>/dev/null || true
+  sleep 2
+  pkill -f "openclaw.*gateway" 2>/dev/null || true
+  sleep 1
+  launchctl load "\$PLIST"
+  sleep 5
+  if curl -sf "http://localhost:\$PORT/health" &>/dev/null; then
+    echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] Gateway RECOVERED" >> "\$LOG"
+  else
+    echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] Gateway FAILED TO RECOVER — manual intervention needed" >> "\$LOG"
+  fi
+fi
+WATCHDOG
+chmod +x "\$WATCHDOG_SCRIPT"
+sed -i "s|\\\$HOME|\$HOME|g" "\$WATCHDOG_SCRIPT"
+
+# Create LaunchAgent plist (runs every 2 minutes)
+cat > "\$WATCHDOG_PLIST" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.openclaw.gateway-watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>\$WATCHDOG_SCRIPT</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>120</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>\$HOME/.openclaw/logs/watchdog.log</string>
+  <key>StandardErrorPath</key>
+  <string>\$HOME/.openclaw/logs/watchdog.err.log</string>
+</dict>
+</plist>
+EOF
+
+launchctl unload "\$WATCHDOG_PLIST" 2>/dev/null || true
+launchctl load "\$WATCHDOG_PLIST"
+echo "✅ Watchdog installed — checks gateway every 2 minutes"
+echo "   Log: ~/.openclaw/logs/watchdog.log"
+echo "   Disable: launchctl unload \$WATCHDOG_PLIST"`,
   },
 ];
 

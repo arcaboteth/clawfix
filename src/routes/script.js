@@ -52,7 +52,7 @@ set -euo pipefail
 
 # --- Config ---
 API_URL="\${CLAWFIX_API:-https://clawfix.dev}"
-VERSION="0.2.0"
+VERSION="0.4.0"
 
 # --- Colors ---
 RED='\\033[0;31m'
@@ -183,9 +183,76 @@ if [ -n "\$OPENCLAW_CONFIG" ]; then
   GATEWAY_PORT=\$(jq -r '.gateway.port // 18789' "\$OPENCLAW_CONFIG" 2>/dev/null || echo "18789")
 fi
 
+# Check if port is actually listening (process may exist but be zombie/shutdown)
+PORT_LISTENING=false
+PROCESS_EXISTS=false
+[ -n "\$GATEWAY_PID" ] && PROCESS_EXISTS=true
+if lsof -i ":\${GATEWAY_PORT:-18789}" &>/dev/null 2>&1 || ss -tlnp 2>/dev/null | grep -q ":\${GATEWAY_PORT:-18789} "; then
+  PORT_LISTENING=true
+fi
+
+# --- Check Service Manager ---
+echo ""
+echo -e "\${BLUE}🔧 Checking service manager...\${NC}"
+
+SERVICE_MANAGER="none"
+SERVICE_STATE=""
+SERVICE_EXIT_CODE=""
+SERVICE_RUNS=""
+SERVICE_PID=""
+
+if [ "\$OS_NAME" = "Darwin" ]; then
+  SERVICE_MANAGER="launchd"
+  LAUNCHCTL_OUT=\$(launchctl list 2>/dev/null | grep -i openclaw || echo "")
+  if [ -n "\$LAUNCHCTL_OUT" ]; then
+    SERVICE_PID=\$(echo "\$LAUNCHCTL_OUT" | awk '{print \$1}')
+    SERVICE_EXIT_CODE=\$(echo "\$LAUNCHCTL_OUT" | awk '{print \$2}')
+    # Exit code -15 = SIGTERM, -1 = last run failed
+    if [ "\$SERVICE_EXIT_CODE" = "-15" ]; then
+      SERVICE_STATE="sigterm"
+      echo -e "   \${RED}⚠️  Service received SIGTERM (exit -15) — possible crash loop or forced kill\${NC}"
+    elif [ "\$SERVICE_EXIT_CODE" = "0" ] && [ "\$SERVICE_PID" != "-" ]; then
+      SERVICE_STATE="running"
+      echo -e "   \${GREEN}✅ launchd: running (pid \$SERVICE_PID)\${NC}"
+    elif [ "\$SERVICE_PID" = "-" ] && [ "\$SERVICE_EXIT_CODE" != "0" ]; then
+      SERVICE_STATE="crashed"
+      echo -e "   \${RED}❌ launchd: not running (last exit: \$SERVICE_EXIT_CODE)\${NC}"
+    else
+      SERVICE_STATE="unknown"
+      echo -e "   \${YELLOW}⚠️  launchd state unclear: \$LAUNCHCTL_OUT\${NC}"
+    fi
+    # Get ThrottleInterval / runs if plist exists
+    PLIST_PATH="\$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+    if [ -f "\$PLIST_PATH" ]; then
+      SERVICE_RUNS=\$(defaults read "\$PLIST_PATH" ThrottleInterval 2>/dev/null || echo "")
+      echo -e "   plist: \$PLIST_PATH"
+    fi
+  else
+    SERVICE_STATE="not_registered"
+    echo -e "   \${YELLOW}⚠️  No openclaw LaunchAgent found in launchctl\${NC}"
+  fi
+elif command -v systemctl &>/dev/null; then
+  SERVICE_MANAGER="systemd"
+  SYSTEMCTL_OUT=\$(systemctl status openclaw-gateway 2>/dev/null | head -10 || echo "")
+  if echo "\$SYSTEMCTL_OUT" | grep -q "active (running)"; then
+    SERVICE_STATE="running"
+    echo -e "   \${GREEN}✅ systemd: active (running)\${NC}"
+  elif echo "\$SYSTEMCTL_OUT" | grep -q "failed"; then
+    SERVICE_STATE="failed"
+    SERVICE_EXIT_CODE=\$(echo "\$SYSTEMCTL_OUT" | grep -oP 'status=\K[0-9/]+' || echo "?")
+    echo -e "   \${RED}❌ systemd: failed (exit \$SERVICE_EXIT_CODE)\${NC}"
+  elif echo "\$SYSTEMCTL_OUT" | grep -q "inactive"; then
+    SERVICE_STATE="inactive"
+    echo -e "   \${YELLOW}⚠️  systemd: inactive (stopped)\${NC}"
+  fi
+  SERVICE_RUNS=\$(systemctl show openclaw-gateway --property=NRestarts 2>/dev/null | cut -d= -f2 || echo "0")
+else
+  echo -e "   No service manager detected"
+fi
+
 echo -e "   Status: \$GATEWAY_STATUS"
-[ -n "\$GATEWAY_PID" ] && echo -e "   PID: \$GATEWAY_PID"
-echo -e "   Port: \${GATEWAY_PORT:-18789}"
+[ -n "\$GATEWAY_PID" ] && echo -e "   PID: \$GATEWAY_PID (exists: \$PROCESS_EXISTS)"
+echo -e "   Port: \${GATEWAY_PORT:-18789} (listening: \$PORT_LISTENING)"
 
 # --- Check Logs ---
 echo ""
@@ -193,15 +260,29 @@ echo -e "\${BLUE}📜 Reading recent logs...\${NC}"
 
 GATEWAY_LOG=""
 ERROR_LOG=""
+SIGTERM_COUNT=0
 
 if [ -f "\$OPENCLAW_DIR/logs/gateway.log" ]; then
   GATEWAY_LOG=\$(tail -100 "\$OPENCLAW_DIR/logs/gateway.log" 2>/dev/null | grep -i "error\\|warn\\|fail\\|crash\\|EADDRINUSE\\|EACCES" | tail -30 || echo "")
   echo -e "   \${GREEN}✅ Gateway log found (\$(wc -l < "\$OPENCLAW_DIR/logs/gateway.log" | tr -d ' ') lines)\${NC}"
 fi
 
+ERR_LOG_SIZE_MB=0
+HANDSHAKE_TIMEOUT_COUNT=0
 if [ -f "\$OPENCLAW_DIR/logs/gateway.err.log" ]; then
   ERROR_LOG=\$(tail -50 "\$OPENCLAW_DIR/logs/gateway.err.log" 2>/dev/null || echo "")
-  echo -e "   \${GREEN}✅ Error log found\${NC}"
+  # Collect metrics about the error log
+  ERR_LOG_SIZE_MB=\$(du -sm "\$OPENCLAW_DIR/logs/gateway.err.log" 2>/dev/null | awk '{print \$1}' || echo "0")
+  HANDSHAKE_TIMEOUT_COUNT=\$(grep -c "invalid handshake\\|closed before connect\\|chrome-extension.*timeout" "\$OPENCLAW_DIR/logs/gateway.err.log" 2>/dev/null || echo "0")
+  # Also scan for SIGTERM events in gateway log
+  SIGTERM_COUNT=\$(grep -c "signal SIGTERM received\\|exit code -15" "\$OPENCLAW_DIR/logs/gateway.log" 2>/dev/null || echo "0")
+  if [ "\$ERR_LOG_SIZE_MB" -gt 10 ]; then
+    echo -e "   \${YELLOW}⚠️  Error log is \${ERR_LOG_SIZE_MB}MB (large — likely log spam)\${NC}"
+  else
+    echo -e "   \${GREEN}✅ Error log found (\${ERR_LOG_SIZE_MB}MB)\${NC}"
+  fi
+  [ "\$HANDSHAKE_TIMEOUT_COUNT" -gt 0 ] && echo -e "   \${YELLOW}⚠️  \$HANDSHAKE_TIMEOUT_COUNT handshake timeout lines (browser relay spam?)\${NC}"
+  [ "\$SIGTERM_COUNT" -gt 0 ] && echo -e "   \${YELLOW}⚠️  \$SIGTERM_COUNT SIGTERM events in gateway log\${NC}"
 fi
 
 # --- Check Plugins ---
@@ -299,12 +380,24 @@ DIAGNOSTIC=\$(cat <<EOF
     "configDir": "\${OPENCLAW_DIR:-not found}",
     "gatewayStatus": \$(echo "\$GATEWAY_STATUS" | jq -Rs .),
     "gatewayPid": "\${GATEWAY_PID:-none}",
-    "gatewayPort": "\${GATEWAY_PORT:-18789}"
+    "gatewayPort": "\${GATEWAY_PORT:-18789}",
+    "processExists": \$PROCESS_EXISTS,
+    "portListening": \$PORT_LISTENING
+  },
+  "service": {
+    "manager": "\$SERVICE_MANAGER",
+    "state": "\${SERVICE_STATE:-unknown}",
+    "exitCode": "\${SERVICE_EXIT_CODE:-}",
+    "pid": "\${SERVICE_PID:-}",
+    "runs": "\${SERVICE_RUNS:-}"
   },
   "config": \$SANITIZED_CONFIG,
   "logs": {
     "errors": \$(echo "\$GATEWAY_LOG" | jq -Rs .),
-    "stderr": \$(echo "\$ERROR_LOG" | jq -Rs .)
+    "stderr": \$(echo "\$ERROR_LOG" | jq -Rs .),
+    "errLogSizeMB": \${ERR_LOG_SIZE_MB:-0},
+    "handshakeTimeoutCount": \${HANDSHAKE_TIMEOUT_COUNT:-0},
+    "sigtermCount": \${SIGTERM_COUNT:-0}
   },
   "workspace": {
     "path": "\${WORKSPACE_DIR:-unknown}",
