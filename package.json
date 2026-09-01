@@ -40,7 +40,7 @@
   "dependencies": {
     "express": "^5.1.0",
     "helmet": "^8.1.0",
-    "nanoid": "^5.1.5",
+    "nanoid": "^5.1.16",
     "pg": "^8.18.0"
   },
   "engines": {

@@ -1,4 +1,8 @@
-import { spawnSync } from 'node:child_process';
+function defaultSpawn() {
+  const isWorker = globalThis.navigator?.userAgent === 'Cloudflare-Workers';
+  if (isWorker || typeof process.getBuiltinModule !== 'function') return null;
+  return process.getBuiltinModule('node:child_process')?.spawnSync || null;
+}
 
 function clean(value, maxLength = 2000) {
   return String(value || '')
@@ -8,7 +12,7 @@ function clean(value, maxLength = 2000) {
 }
 
 export function validateRepairScript(script, {
-  spawn = spawnSync,
+  spawn = defaultSpawn(),
   runShellCheck = true,
 } = {}) {
   const value = String(script || '').trim();
@@ -21,21 +25,33 @@ export function validateRepairScript(script, {
     };
   }
 
-  const syntaxResult = spawn('bash', ['-n'], {
-    encoding: 'utf8',
-    input: value,
-    timeout: 10_000,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  const syntax = {
-    ok: syntaxResult.status === 0,
-    error: syntaxResult.status === 0
-      ? null
-      : clean(syntaxResult.stderr || syntaxResult.error?.message),
-  };
+  const portableBlocker = value.length > 500_000
+    ? 'Repair script exceeds the size limit'
+    : /[\u0000]/.test(value)
+      ? 'Repair script contains a NUL byte'
+      : !value.startsWith('#!/usr/bin/env bash')
+        ? 'Repair script is missing the Bash interpreter header'
+        : !value.includes('set -euo pipefail')
+          ? 'Repair script is missing fail-closed shell options'
+          : null;
+  let syntax = { ok: portableBlocker === null, error: portableBlocker };
+  if (spawn) {
+    const syntaxResult = spawn('bash', ['-n'], {
+      encoding: 'utf8',
+      input: value,
+      timeout: 10_000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    syntax = {
+      ok: syntaxResult.status === 0,
+      error: syntaxResult.status === 0
+        ? null
+        : clean(syntaxResult.stderr || syntaxResult.error?.message),
+    };
+  }
 
   let shellcheck = { available: false, findings: [] };
-  if (runShellCheck) {
+  if (runShellCheck && spawn) {
     const result = spawn('shellcheck', ['--format=json', '--shell=bash', '-'], {
       encoding: 'utf8',
       input: value,

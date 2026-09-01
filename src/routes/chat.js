@@ -1,11 +1,15 @@
 import { Router } from 'express';
-import { getDiagnosis } from '../db.js';
+import { getDiagnosis, getPool } from '../db.js';
 import { getAIConfig, requestAI } from '../ai.js';
 import { redactOutbound, redactText } from '../../cli/bin/security.js';
-import { pruneLegacyConversations } from '../conversation-store.js';
+import { getRuntimeEnv } from '../runtime-env.js';
 import {
-  clientIp,
-  createRateLimiter,
+  acquireConcurrencyLease,
+  appendConversationMessage,
+  beginConversationTurn,
+} from '../shared-state.js';
+import {
+  consumeRouteRateLimit,
   isPaidAIEnabled,
   positiveEnvInteger,
   sharedAIRequestGuard,
@@ -13,17 +17,6 @@ import {
 } from '../security.js';
 
 export const chatRouter = Router();
-
-// In-memory conversation store (keyed by conversationId)
-const conversations = new Map();
-
-const AI_CONFIG = getAIConfig();
-const AI_ENABLED = isPaidAIEnabled(AI_CONFIG);
-const chatLimiter = createRateLimiter({
-  limit: positiveEnvInteger(process.env.CHAT_RATE_LIMIT, 30),
-  windowMs: positiveEnvInteger(process.env.RATE_LIMIT_WINDOW_MS, 60_000),
-});
-
 
 const CHAT_SYSTEM_PROMPT = `You are ClawFix, an expert AI diagnostician for OpenClaw installations.
 You're in an interactive debugging session with a user. You have their full diagnostic data available.
@@ -54,22 +47,56 @@ Rules:
  */
 chatRouter.post('/chat', async (req, res) => {
   let release = null;
+  let conversationRelease = null;
   let upstreamAbort = null;
   let closeHandler = null;
+  const releaseGuards = async () => {
+    if (conversationRelease) {
+      await conversationRelease();
+      conversationRelease = null;
+    }
+    if (release) {
+      await release();
+      release = null;
+    }
+  };
   try {
+    const env = getRuntimeEnv();
+    const db = getPool();
+    const aiConfig = getAIConfig(env);
+    const aiEnabled = isPaidAIEnabled(aiConfig, env);
     if (!validateChatBody(req.body).ok) {
       return res.status(400).json({ error: 'Invalid chat request' });
     }
-    if (!chatLimiter.consume(clientIp(req)).allowed) {
+    const rate = await consumeRouteRateLimit('chat-ip', req, {
+      env,
+      db,
+      limit: positiveEnvInteger(env.CHAT_RATE_LIMIT, 30),
+    });
+    if (!rate.allowed) {
       return res.status(429).json({ error: 'Too many chat requests' });
-    }
-    if (AI_ENABLED) {
-      const capacity = sharedAIRequestGuard.acquire(req);
-      if (!capacity.allowed) return res.status(capacity.status).json({ error: capacity.error });
-      release = capacity.release;
     }
     const { diagnosticId, message, conversationId } = req.body;
     const safeMessage = redactText(message).slice(0, 4000);
+    const conversationLease = await acquireConcurrencyLease({
+      scope: `conversation:legacy-chat:${conversationId}`,
+      limit: 1,
+      ttlMs: aiConfig.timeoutMs + 30_000,
+      db,
+    });
+    if (!conversationLease.allowed) {
+      await releaseGuards();
+      return res.status(409).json({ error: 'Conversation already has an active turn' });
+    }
+    conversationRelease = conversationLease.release;
+    if (aiEnabled) {
+      const capacity = await sharedAIRequestGuard.acquire(req, { env, db });
+      if (!capacity.allowed) {
+        await releaseGuards();
+        return res.status(capacity.status).json({ error: capacity.error });
+      }
+      release = capacity.release;
+    }
 
     // Retrieve diagnostic context if provided
     let diagnosticContext = '';
@@ -80,33 +107,18 @@ chatRouter.post('/chat', async (req, res) => {
       }
     }
 
-    // Get or create conversation history. Prune before and after insertion so fallback and
-    // provider-error paths cannot grow this process-local store without bound.
-    const now = Date.now();
-    pruneLegacyConversations(conversations, { now });
-    if (!conversations.has(conversationId)) {
-      conversations.set(conversationId, {
-        messages: [],
-        diagnosticId,
-        createdAt: now,
-        lastSeenAt: now,
-      });
-      pruneLegacyConversations(conversations, { now });
-    }
-    const conv = conversations.get(conversationId);
-    if (!conv) return res.status(503).json({ error: 'Conversation capacity unavailable' });
-    if (conv.diagnosticId !== diagnosticId) {
+    const turn = await beginConversationTurn({
+      route: 'legacy-chat',
+      id: conversationId,
+      diagnosticId,
+      message: { role: 'user', content: safeMessage },
+      db,
+    });
+    if (!turn.ok) {
+      await releaseGuards();
       return res.status(409).json({ error: 'Conversation diagnostic mismatch' });
     }
-    conv.lastSeenAt = now;
-
-    // Add user message
-    conv.messages.push({ role: 'user', content: safeMessage });
-
-    // Keep conversation history and provider spend bounded.
-    if (conv.messages.length > 12) {
-      conv.messages = conv.messages.slice(-12);
-    }
+    const conv = turn.conversation;
 
     // Build messages array for AI
     const systemContent = CHAT_SYSTEM_PROMPT + diagnosticContext;
@@ -116,9 +128,13 @@ chatRouter.post('/chat', async (req, res) => {
     ];
 
     // Check if AI is available
-    if (!AI_ENABLED) {
+    if (!aiEnabled) {
       const fallback = 'AI chat is not available on this server. Use `fix <id>` to apply pattern-matched fixes, or ask the operator to configure authenticated AI or explicitly enable public AI.';
-      conv.messages.push({ role: 'assistant', content: fallback });
+      await appendConversationMessage({
+        route: 'legacy-chat', id: conversationId,
+        message: { role: 'assistant', content: fallback }, db,
+      });
+      await releaseGuards();
       return res.json({ response: fallback, conversationId });
     }
 
@@ -137,7 +153,7 @@ chatRouter.post('/chat', async (req, res) => {
 
     // Stream from AI
     const aiResponse = await requestAI({
-      config: AI_CONFIG,
+      config: aiConfig,
       messages: aiMessages,
       stream: true,
       signal: upstreamAbort.signal,
@@ -181,13 +197,20 @@ chatRouter.post('/chat', async (req, res) => {
 
     // Store assistant response in conversation
     if (fullResponse) {
-      conv.messages.push({ role: 'assistant', content: fullResponse });
+      await appendConversationMessage({
+        route: 'legacy-chat', id: conversationId,
+        message: { role: 'assistant', content: fullResponse }, db,
+      });
     }
 
+    await releaseGuards();
     res.write('data: [DONE]\n\n');
     res.end();
   } catch (error) {
     console.error('Chat error:', redactText(error?.message || 'unknown error'));
+    await releaseGuards().catch(releaseError => {
+      console.error('Chat lease release error:', redactText(releaseError?.message || 'unknown error'));
+    });
     if (!res.headersSent) {
       res.status(500).json({ error: 'Chat failed' });
     } else {
@@ -197,6 +220,6 @@ chatRouter.post('/chat', async (req, res) => {
     }
   } finally {
     if (closeHandler) res.off('close', closeHandler);
-    release?.();
+    await releaseGuards();
   }
 });
